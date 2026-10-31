@@ -1,0 +1,52 @@
+<div style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; min-height: 100vh; background-color: #f8fafc; color: #1e293b;">
+  <header style="background: linear-gradient(135deg, #1e3a8a, #3b82f6); color: white; padding: 1.5rem 2rem; box-shadow: 0 4px 6px -1px rgba(0,0,0,0.1);">
+    <div style="max-width: 1200px; margin: 0 auto; display: flex; justify-content: space-between; align-items: center;">
+      <div style="display: flex; align-items: center; gap: 0.75rem;">
+        <span style="font-size: 1.75rem;">💳</span>
+        <h1 style="margin: 0; font-size: 1.5rem; font-weight: 700; letter-spacing: -0.025em;">SmartWallet SOA</h1>
+      </div>
+      <span style="background: rgba(255,255,255,0.2); padding: 0.35rem 0.85rem; border-radius: 9999px; font-size: 0.875rem; font-weight: 500;">Sprint 0 Foundation Ready</span>
+    </div>
+  </header>
+
+  <main style="max-width: 1200px; margin: 2rem auto; padding: 0 1.5rem;">
+    <div style="background: white; border-radius: 12px; padding: 2rem; box-shadow: 0 1px 3px 0 rgba(0,0,0,0.1); border: 1px solid #e2e8f0; margin-bottom: 2rem;">
+      <h2 style="margin-top: 0; color: #0f172a; font-size: 1.25rem;">🚀 Nền Tảng Kiến Trúc Hướng Dịch Vụ (SOA Foundation)</h2>
+      <p style="color: #64748b; line-height: 1.6;">
+        Hệ thống Quản lý Chi tiêu Cá nhân SmartWallet đã hoàn thành khởi tạo hạ tầng nền tảng <strong>Sprint 0</strong>.
+        API Gateway YARP cổng <code>:8000</code>, SharedKernel kết nối RabbitMQ và Consul, 12 dịch vụ SOA độc lập và ứng dụng Angular 17+ đã sẵn sàng cho Sprint 1.
+      </p>
+
+      <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 1rem; margin-top: 1.5rem;">
+        <div style="padding: 1.25rem; border-radius: 8px; background: #f0fdf4; border: 1px solid #bbf7d0;">
+          <h3 style="margin-top: 0; font-size: 1rem; color: #166534; display: flex; align-items: center; gap: 0.5rem;">
+            <span>🛡️</span> API Gateway YARP
+          </h3>
+          <p style="margin: 0.5rem 0 0; font-size: 0.875rem; color: #15803d;">
+            Cổng <code>:8000</code> điều hướng tới 12 services, tích hợp JWT validation, Correlation ID và CORS.
+          </p>
+        </div>
+
+        <div style="padding: 1.25rem; border-radius: 8px; background: #eff6ff; border: 1px solid #bfdbfe;">
+          <h3 style="margin-top: 0; font-size: 1rem; color: #1e40af; display: flex; align-items: center; gap: 0.5rem;">
+            <span>⚡</span> Event Bus & Discovery
+          </h3>
+          <p style="margin: 0.5rem 0 0; font-size: 0.875rem; color: #1d4ed8;">
+            RabbitMQ Exchange <code>qlct.events</code> và HashiCorp Consul Service Registry <code>:8500</code>.
+          </p>
+        </div>
+
+        <div style="padding: 1.25rem; border-radius: 8px; background: #faf5ff; border: 1px solid #e9d5ff;">
+          <h3 style="margin-top: 0; font-size: 1rem; color: #6b21a8; display: flex; align-items: center; gap: 0.5rem;">
+            <span>📱</span> Angular Standalone Frontend
+          </h3>
+          <p style="margin: 0.5rem 0 0; font-size: 0.875rem; color: #7e22ce;">
+            HttpInterceptor tự động gắn JWT Bearer, RoleGuard bảo vệ Route và Proxy định tuyến an toàn.
+          </p>
+        </div>
+      </div>
+    </div>
+
+    <router-outlet></router-outlet>
+  </main>
+</div>

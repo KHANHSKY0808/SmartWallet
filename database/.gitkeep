@@ -1,0 +1,3 @@
+# Thư mục lưu trữ các file SQLite (*.db) cục bộ khi chạy dev
+# Các file .db sẽ được sinh tự động khi các service khởi chạy
+

@@ -1,0 +1,13 @@
+d:\Code\QLCT_SmartWallet\SmartWallet\src\Shared\SharedKernel\bin\Debug\net10.0\SharedKernel.deps.json
+d:\Code\QLCT_SmartWallet\SmartWallet\src\Shared\SharedKernel\bin\Debug\net10.0\SharedKernel.dll
+d:\Code\QLCT_SmartWallet\SmartWallet\src\Shared\SharedKernel\bin\Debug\net10.0\SharedKernel.pdb
+d:\Code\QLCT_SmartWallet\SmartWallet\src\Shared\SharedKernel\obj\Debug\net10.0\SharedKernel.csproj.AssemblyReference.cache
+d:\Code\QLCT_SmartWallet\SmartWallet\src\Shared\SharedKernel\obj\Debug\net10.0\SharedKernel.GeneratedMSBuildEditorConfig.editorconfig
+d:\Code\QLCT_SmartWallet\SmartWallet\src\Shared\SharedKernel\obj\Debug\net10.0\SharedKernel.AssemblyInfoInputs.cache
+d:\Code\QLCT_SmartWallet\SmartWallet\src\Shared\SharedKernel\obj\Debug\net10.0\SharedKernel.AssemblyInfo.cs
+d:\Code\QLCT_SmartWallet\SmartWallet\src\Shared\SharedKernel\obj\Debug\net10.0\SharedKernel.csproj.CoreCompileInputs.cache
+d:\Code\QLCT_SmartWallet\SmartWallet\src\Shared\SharedKernel\obj\Debug\net10.0\SharedKernel.sourcelink.json
+d:\Code\QLCT_SmartWallet\SmartWallet\src\Shared\SharedKernel\obj\Debug\net10.0\SharedKernel.dll
+d:\Code\QLCT_SmartWallet\SmartWallet\src\Shared\SharedKernel\obj\Debug\net10.0\refint\SharedKernel.dll
+d:\Code\QLCT_SmartWallet\SmartWallet\src\Shared\SharedKernel\obj\Debug\net10.0\SharedKernel.pdb
+d:\Code\QLCT_SmartWallet\SmartWallet\src\Shared\SharedKernel\obj\Debug\net10.0\ref\SharedKernel.dll

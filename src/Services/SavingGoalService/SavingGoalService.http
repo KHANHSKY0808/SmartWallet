@@ -1,0 +1,6 @@
+@SavingGoalService_HostAddress = http://localhost:5277
+
+GET {{SavingGoalService_HostAddress}}/weatherforecast/
+Accept: application/json
+
+###
