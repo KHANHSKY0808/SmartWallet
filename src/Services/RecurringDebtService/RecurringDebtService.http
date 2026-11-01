@@ -1,6 +1,0 @@
-@RecurringDebtService_HostAddress = http://localhost:5194
-
-GET {{RecurringDebtService_HostAddress}}/weatherforecast/
-Accept: application/json
-
-###

@@ -48,9 +48,11 @@ public class JwtAuthExtensionsTests
     public void AddJwtAuthentication_ShouldSucceed_WhenKeyIsValid()
     {
         var services = new ServiceCollection();
+        // Sinh key ngẫu nhiên đạt chuẩn >= 32 bytes phục vụ test
+        var testKey = Convert.ToBase64String(Guid.NewGuid().ToByteArray()) + Convert.ToBase64String(Guid.NewGuid().ToByteArray());
         var inMemorySettings = new Dictionary<string, string?>
         {
-            { "Jwt:SigningKey", "SecretKeyChungChoHeThongQLCTSoa20261234567890!" } // >= 32 bytes
+            { "Jwt:SigningKey", testKey }
         };
         var config = new ConfigurationBuilder()
             .AddInMemoryCollection(inMemorySettings)

@@ -14,7 +14,7 @@ public record TransactionCreatedEvent : IntegrationEvent
     public Guid UserId { get; init; }
     public Guid WalletId { get; init; }
     public Guid CategoryId { get; init; }
-    public int Type { get; init; } // 1: Expense, 2: Income
+    public int Type { get; init; } // 1: Expense, 2: Income, 3: Transfer
     public decimal Amount { get; init; }
     public DateTime TransactionDate { get; init; }
     public string? Note { get; init; }
