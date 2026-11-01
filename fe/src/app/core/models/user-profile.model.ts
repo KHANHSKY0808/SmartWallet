@@ -24,3 +24,4 @@ export interface Currency {
 export interface AvatarUploadResponse {
   avatarUrl: string;
 }
+

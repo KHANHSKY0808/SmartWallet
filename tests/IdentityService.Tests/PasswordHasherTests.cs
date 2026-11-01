@@ -48,3 +48,4 @@ public class PasswordHasherTests
         Assert.False(isValid);
     }
 }
+

@@ -46,3 +46,4 @@ describe('AuthService', () => {
     expect(service.currentUserRole()).toBeNull();
   });
 });
+

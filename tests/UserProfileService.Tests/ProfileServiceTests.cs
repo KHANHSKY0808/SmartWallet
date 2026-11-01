@@ -127,3 +127,4 @@ public class ProfileServiceTests : IDisposable
         _connection.Dispose();
     }
 }
+

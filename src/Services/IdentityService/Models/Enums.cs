@@ -12,3 +12,4 @@ public enum UserTokenType
     EmailConfirm = 1,
     PasswordReset = 2
 }
+

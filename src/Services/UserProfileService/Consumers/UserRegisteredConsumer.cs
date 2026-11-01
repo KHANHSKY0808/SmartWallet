@@ -32,3 +32,4 @@ public class UserRegisteredConsumer : BaseRabbitMqConsumer<UserRegisteredEvent>
             @event.DefaultCurrency);
     }
 }
+

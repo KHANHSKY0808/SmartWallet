@@ -107,3 +107,4 @@ public class TokenService : ITokenService
         return Convert.ToHexString(hash).ToLowerInvariant();
     }
 }
+

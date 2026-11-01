@@ -86,3 +86,4 @@ public record ChangePasswordRequest
     [Compare(nameof(NewPassword), ErrorMessage = "Mật khẩu xác nhận không khớp")]
     public string ConfirmPassword { get; init; } = string.Empty;
 }
+

@@ -29,3 +29,4 @@ export class ProfileService {
     return this.http.get<Currency[]>(`${this.apiUrl}/currencies`);
   }
 }
+

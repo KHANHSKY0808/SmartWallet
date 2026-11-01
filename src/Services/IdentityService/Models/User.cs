@@ -15,3 +15,4 @@ public class User
     public ICollection<RefreshToken> RefreshTokens { get; set; } = new List<RefreshToken>();
     public ICollection<UserToken> UserTokens { get; set; } = new List<UserToken>();
 }
+

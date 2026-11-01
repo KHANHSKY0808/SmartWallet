@@ -30,3 +30,4 @@ public record AvatarUploadResponse
 {
     public string AvatarUrl { get; init; } = string.Empty;
 }
+

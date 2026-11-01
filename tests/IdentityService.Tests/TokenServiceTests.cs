@@ -84,3 +84,4 @@ public class TokenServiceTests
         Assert.Equal(64, hash1.Length); // 256 bits = 64 hex characters
     }
 }
+

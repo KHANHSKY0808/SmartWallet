@@ -141,3 +141,4 @@ export class ConfirmEmailComponent implements OnInit {
     });
   }
 }
+

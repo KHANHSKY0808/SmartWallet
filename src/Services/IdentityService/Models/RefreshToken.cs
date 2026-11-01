@@ -10,3 +10,4 @@ public class RefreshToken
     public bool IsRevoked { get; set; } = false;
     public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
 }
+
