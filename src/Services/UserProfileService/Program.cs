@@ -1,4 +1,9 @@
-﻿using SharedKernel.Extensions;
+using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.FileProviders;
+using SharedKernel.Extensions;
+using UserProfileService.Consumers;
+using UserProfileService.Data;
+using UserProfileService.Services;
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -9,6 +14,20 @@ builder.Services.AddEndpointsApiExplorer();
 // Cấu hình Swagger
 builder.Services.AddSwaggerGen();
 
+// Cấu hình Database SQLite
+var connectionString = builder.Configuration.GetConnectionString("DefaultConnection") 
+    ?? "Data Source=../../../database/profile.db;Cache=Shared";
+builder.Services.AddDbContext<ProfileDbContext>(options =>
+{
+    options.UseSqlite(connectionString);
+});
+
+// Đăng ký Services nghiệp vụ
+builder.Services.AddScoped<IProfileService, ProfileService>();
+
+// Đăng ký RabbitMQ Consumer Hosted Service
+builder.Services.AddHostedService<UserRegisteredConsumer>();
+
 // Cấu hình JWT Bearer chung từ SharedKernel
 builder.Services.AddJwtAuthentication(builder.Configuration);
 
@@ -16,6 +35,26 @@ builder.Services.AddJwtAuthentication(builder.Configuration);
 builder.Services.AddConsulConfig(builder.Configuration);
 
 var app = builder.Build();
+
+// Khởi tạo Database và Seed Currencies
+using (var scope = app.Services.CreateScope())
+{
+    var context = scope.ServiceProvider.GetRequiredService<ProfileDbContext>();
+    await ProfileDbInitializer.InitializeAsync(context, app.Logger);
+}
+
+// Cấu hình Static Files cho uploads
+var uploadsDir = Path.Combine(app.Environment.ContentRootPath, "uploads");
+if (!Directory.Exists(uploadsDir))
+{
+    Directory.CreateDirectory(uploadsDir);
+}
+
+app.UseStaticFiles(new StaticFileOptions
+{
+    FileProvider = new PhysicalFileProvider(uploadsDir),
+    RequestPath = "/uploads"
+});
 
 if (app.Environment.IsDevelopment())
 {
@@ -41,3 +80,6 @@ app.UseConsulServiceRegistration(builder.Configuration, app.Lifetime);
 app.MapControllers();
 
 app.Run();
+
+// Hỗ trợ WebApplicationFactory trong Unit Test
+public partial class Program { }

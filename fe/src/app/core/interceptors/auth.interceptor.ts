@@ -1,7 +1,7 @@
 import { HttpInterceptorFn, HttpErrorResponse } from '@angular/common/http';
 import { inject } from '@angular/core';
 import { Router } from '@angular/router';
-import { catchError, throwError } from 'rxjs';
+import { catchError, switchMap, throwError } from 'rxjs';
 import { AuthService } from '../services/auth.service';
 
 export const authInterceptor: HttpInterceptorFn = (req, next) => {
@@ -20,12 +20,36 @@ export const authInterceptor: HttpInterceptorFn = (req, next) => {
 
   return next(authReq).pipe(
     catchError((error: HttpErrorResponse) => {
-      if (error.status === 401) {
+      // Bỏ qua các endpoint auth công khai để tránh loop vô tận
+      const isAuthUrl = req.url.includes('/api/auth/login') ||
+                        req.url.includes('/api/auth/refresh') ||
+                        req.url.includes('/api/auth/register');
+
+      if (error.status === 401 && !isAuthUrl && authService.getRefreshToken()) {
+        // Thực hiện Silent Refresh Token khi nhận lỗi 401
+        return authService.refreshToken().pipe(
+          switchMap(response => {
+            const retryReq = req.clone({
+              setHeaders: {
+                Authorization: `Bearer ${response.accessToken}`
+              }
+            });
+            return next(retryReq);
+          }),
+          catchError(refreshError => {
+            authService.clearSession();
+            router.navigate(['/login']);
+            return throwError(() => refreshError);
+          })
+        );
+      }
+
+      if (error.status === 401 && !isAuthUrl) {
         authService.clearSession();
         router.navigate(['/login']);
       }
+
       return throwError(() => error);
     })
   );
 };
-
