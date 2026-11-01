@@ -8,13 +8,29 @@ namespace SharedKernel.Extensions;
 
 public static class JwtAuthExtensions
 {
-    public const string DefaultSigningKey = "SecretKeyChungChoHeThongQLCTSoa20261234567890!";
-
     public static IServiceCollection AddJwtAuthentication(
         this IServiceCollection services,
         IConfiguration configuration)
     {
-        var jwtKey = configuration["Jwt:SigningKey"] ?? DefaultSigningKey;
+        // Ưu tiên đọc từ Configuration (appsettings / user-secrets), sau đó fallback sang biến môi trường
+        var jwtKey = configuration["Jwt:SigningKey"]
+            ?? Environment.GetEnvironmentVariable("JWT_SIGNING_KEY");
+
+        // Fail-fast: Báo lỗi nghiêm ngặt ngay khi khởi động nếu thiếu signing key
+        if (string.IsNullOrWhiteSpace(jwtKey))
+        {
+            throw new InvalidOperationException(
+                "CRITICAL SECURITY ERROR: JWT SigningKey is missing. " +
+                "Please configure 'Jwt:SigningKey' via dotnet user-secrets or environment variable 'JWT_SIGNING_KEY'. " +
+                "Never commit hardcoded secrets to source control.");
+        }
+
+        if (Encoding.UTF8.GetByteCount(jwtKey) < 32)
+        {
+            throw new InvalidOperationException(
+                "CRITICAL SECURITY ERROR: JWT SigningKey must be at least 256 bits (32 bytes) long.");
+        }
+
         var keyBytes = Encoding.UTF8.GetBytes(jwtKey);
 
         services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
@@ -43,4 +59,3 @@ public static class JwtAuthExtensions
         return services;
     }
 }
-

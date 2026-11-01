@@ -1,5 +1,3 @@
-version: '3.8'
-
 services:
   consul:
     image: hashicorp/consul:1.15
@@ -46,4 +44,3 @@ services:
     ports:
       - "1025:1025"   # SMTP server
       - "8025:8025"   # Web UI xem email
-
