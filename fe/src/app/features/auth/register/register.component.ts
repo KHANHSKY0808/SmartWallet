@@ -1,4 +1,4 @@
-import { Component } from '@angular/core';
+import { Component, signal } from '@angular/core';
 import { CommonModule } from '@angular/common';
 import { FormBuilder, FormGroup, ReactiveFormsModule, Validators, AbstractControl } from '@angular/forms';
 import { RouterModule } from '@angular/router';
@@ -23,15 +23,15 @@ function passwordMatchValidator(control: AbstractControl): { [key: string]: bool
         <h2>Đăng ký tài khoản</h2>
         <p class="subtitle">Bắt đầu hành trình làm chủ tài chính cá nhân</p>
 
-        <div *ngIf="successMessage" class="alert alert-success">
-          <strong>🎉 Thành công!</strong> {{ successMessage }}
+        <div *ngIf="successMessage()" class="alert alert-success">
+          <strong>🎉 Thành công!</strong> {{ successMessage() }}
         </div>
 
-        <div *ngIf="errorMessage" class="alert alert-danger">
-          {{ errorMessage }}
+        <div *ngIf="errorMessage()" class="alert alert-danger">
+          {{ errorMessage() }}
         </div>
 
-        <form *ngIf="!successMessage" [formGroup]="registerForm" (ngSubmit)="onSubmit()">
+        <form *ngIf="!successMessage()" [formGroup]="registerForm" (ngSubmit)="onSubmit()">
           <div class="form-group">
             <label for="fullName">Họ và tên</label>
             <input
@@ -86,9 +86,9 @@ function passwordMatchValidator(control: AbstractControl): { [key: string]: bool
             </div>
           </div>
 
-          <button type="submit" [disabled]="registerForm.invalid || isLoading" class="btn btn-primary">
-            <span *ngIf="!isLoading">Tạo tài khoản</span>
-            <span *ngIf="isLoading">Đang tạo tài khoản...</span>
+          <button type="submit" [disabled]="registerForm.invalid || isLoading()" class="btn btn-primary">
+            <span *ngIf="!isLoading()">Tạo tài khoản</span>
+            <span *ngIf="isLoading()">Đang tạo tài khoản...</span>
           </button>
         </form>
 
@@ -215,9 +215,9 @@ function passwordMatchValidator(control: AbstractControl): { [key: string]: bool
 })
 export class RegisterComponent {
   registerForm: FormGroup;
-  isLoading = false;
-  errorMessage = '';
-  successMessage = '';
+  isLoading = signal(false);
+  errorMessage = signal('');
+  successMessage = signal('');
 
   constructor(
     private fb: FormBuilder,
@@ -241,21 +241,21 @@ export class RegisterComponent {
   onSubmit(): void {
     if (this.registerForm.invalid) return;
 
-    this.isLoading = true;
-    this.errorMessage = '';
-    this.successMessage = '';
+    this.isLoading.set(true);
+    this.errorMessage.set('');
+    this.successMessage.set('');
 
     this.authService.register(this.registerForm.value).subscribe({
       next: res => {
-        this.isLoading = false;
-        this.successMessage = res.message || 'Đăng ký thành công! Vui lòng kiểm tra hòm thư email để kích hoạt tài khoản.';
+        this.isLoading.set(false);
+        this.successMessage.set(res.message || 'Đăng ký thành công! Vui lòng kiểm tra hòm thư email để kích hoạt tài khoản.');
       },
       error: err => {
-        this.isLoading = false;
+        this.isLoading.set(false);
         if (err.status === 409) {
-          this.errorMessage = 'Email đã được sử dụng. Vui lòng chọn email khác hoặc đăng nhập.';
+          this.errorMessage.set('Email đã được sử dụng. Vui lòng chọn email khác hoặc đăng nhập.');
         } else {
-          this.errorMessage = err.error?.message || 'Đã có lỗi xảy ra khi đăng ký tài khoản.';
+          this.errorMessage.set(err.error?.message || 'Đã có lỗi xảy ra khi đăng ký tài khoản.');
         }
       }
     });

@@ -1,4 +1,4 @@
-import { Component, OnInit } from '@angular/core';
+import { Component, OnInit, signal } from '@angular/core';
 import { CommonModule } from '@angular/common';
 import { ActivatedRoute, RouterModule } from '@angular/router';
 import { AuthService } from '../../../core/services/auth.service';
@@ -12,21 +12,24 @@ import { AuthService } from '../../../core/services/auth.service';
       <div class="auth-card">
         <h2>Xác nhận kích hoạt tài khoản</h2>
 
-        <div *ngIf="isLoading" class="status-box">
+        <div *ngIf="isLoading()" class="status-box">
           <div class="spinner"></div>
           <p>Đang xác thực mã kích hoạt của bạn...</p>
         </div>
 
-        <div *ngIf="isSuccess" class="alert alert-success">
+        <div *ngIf="isSuccess()" class="alert alert-success">
           <h3>✅ Kích hoạt thành công!</h3>
-          <p>{{ message }}</p>
+          <p>{{ message() }}</p>
           <a routerLink="/login" class="btn btn-primary">Đăng nhập ngay</a>
         </div>
 
-        <div *ngIf="isError" class="alert alert-danger">
+        <div *ngIf="isError()" class="alert alert-danger">
           <h3>❌ Kích hoạt không thành công</h3>
-          <p>{{ message }}</p>
-          <a routerLink="/register" class="btn btn-secondary">Đăng ký lại</a>
+          <p>{{ message() }}</p>
+          <div style="margin-top: 1rem; display: flex; gap: 0.5rem; justify-content: center;">
+            <a routerLink="/login" class="btn btn-primary">Đăng nhập ngay</a>
+            <a routerLink="/register" class="btn btn-secondary">Đăng ký lại</a>
+          </div>
         </div>
       </div>
     </div>
@@ -91,7 +94,6 @@ import { AuthService } from '../../../core/services/auth.service';
     }
     .btn {
       display: inline-block;
-      margin-top: 1rem;
       padding: 0.65rem 1.25rem;
       border-radius: 6px;
       text-decoration: none;
@@ -108,10 +110,10 @@ import { AuthService } from '../../../core/services/auth.service';
   `]
 })
 export class ConfirmEmailComponent implements OnInit {
-  isLoading = true;
-  isSuccess = false;
-  isError = false;
-  message = '';
+  isLoading = signal(true);
+  isSuccess = signal(false);
+  isError = signal(false);
+  message = signal('');
 
   constructor(
     private route: ActivatedRoute,
@@ -121,22 +123,22 @@ export class ConfirmEmailComponent implements OnInit {
   ngOnInit(): void {
     const token = this.route.snapshot.queryParamMap.get('token');
     if (!token) {
-      this.isLoading = false;
-      this.isError = true;
-      this.message = 'Không tìm thấy mã xác nhận trong liên kết.';
+      this.isLoading.set(false);
+      this.isError.set(true);
+      this.message.set('Không tìm thấy mã xác nhận trong liên kết.');
       return;
     }
 
     this.authService.confirmEmail(token).subscribe({
       next: res => {
-        this.isLoading = false;
-        this.isSuccess = true;
-        this.message = res.message || 'Tài khoản của bạn đã được kích hoạt thành công.';
+        this.isLoading.set(false);
+        this.isSuccess.set(true);
+        this.message.set(res.message || 'Tài khoản của bạn đã được kích hoạt thành công.');
       },
       error: err => {
-        this.isLoading = false;
-        this.isError = true;
-        this.message = err.error?.message || 'Mã xác nhận không hợp lệ hoặc đã hết hạn sử dụng.';
+        this.isLoading.set(false);
+        this.isError.set(true);
+        this.message.set(err.error?.message || 'Mã xác nhận không hợp lệ hoặc đã hết hạn sử dụng.');
       }
     });
   }

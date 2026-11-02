@@ -23,7 +23,10 @@ export const authInterceptor: HttpInterceptorFn = (req, next) => {
       // Bỏ qua các endpoint auth công khai để tránh loop vô tận
       const isAuthUrl = req.url.includes('/api/auth/login') ||
                         req.url.includes('/api/auth/refresh') ||
-                        req.url.includes('/api/auth/register');
+                        req.url.includes('/api/auth/register') ||
+                        req.url.includes('/api/auth/forgot-password') ||
+                        req.url.includes('/api/auth/reset-password') ||
+                        req.url.includes('/api/auth/confirm-email');
 
       if (error.status === 401 && !isAuthUrl && authService.getRefreshToken()) {
         // Thực hiện Silent Refresh Token khi nhận lỗi 401

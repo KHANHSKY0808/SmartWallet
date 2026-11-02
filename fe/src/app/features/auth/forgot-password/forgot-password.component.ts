@@ -1,4 +1,4 @@
-import { Component } from '@angular/core';
+import { Component, signal } from '@angular/core';
 import { CommonModule } from '@angular/common';
 import { FormBuilder, FormGroup, ReactiveFormsModule, Validators } from '@angular/forms';
 import { RouterModule } from '@angular/router';
@@ -14,15 +14,15 @@ import { AuthService } from '../../../core/services/auth.service';
         <h2>Quên mật khẩu</h2>
         <p class="subtitle">Nhập email của bạn để nhận liên kết khôi phục mật khẩu (hiệu lực 30 phút)</p>
 
-        <div *ngIf="successMessage" class="alert alert-success">
-          <strong>📨 Đã gửi yêu cầu:</strong> {{ successMessage }}
+        <div *ngIf="successMessage()" class="alert alert-success">
+          <strong>📨 Đã gửi yêu cầu:</strong> {{ successMessage() }}
         </div>
 
-        <div *ngIf="errorMessage" class="alert alert-danger">
-          {{ errorMessage }}
+        <div *ngIf="errorMessage()" class="alert alert-danger">
+          {{ errorMessage() }}
         </div>
 
-        <form *ngIf="!successMessage" [formGroup]="forgotForm" (ngSubmit)="onSubmit()">
+        <form *ngIf="!successMessage()" [formGroup]="forgotForm" (ngSubmit)="onSubmit()">
           <div class="form-group">
             <label for="email">Email tài khoản</label>
             <input
@@ -38,9 +38,9 @@ import { AuthService } from '../../../core/services/auth.service';
             </div>
           </div>
 
-          <button type="submit" [disabled]="forgotForm.invalid || isLoading" class="btn btn-primary">
-            <span *ngIf="!isLoading">Gửi liên kết khôi phục</span>
-            <span *ngIf="isLoading">Đang xử lý...</span>
+          <button type="submit" [disabled]="forgotForm.invalid || isLoading()" class="btn btn-primary">
+            <span *ngIf="!isLoading()">Gửi liên kết khôi phục</span>
+            <span *ngIf="isLoading()">Đang xử lý...</span>
           </button>
         </form>
 
@@ -165,9 +165,9 @@ import { AuthService } from '../../../core/services/auth.service';
 })
 export class ForgotPasswordComponent {
   forgotForm: FormGroup;
-  isLoading = false;
-  errorMessage = '';
-  successMessage = '';
+  isLoading = signal(false);
+  errorMessage = signal('');
+  successMessage = signal('');
 
   constructor(
     private fb: FormBuilder,
@@ -185,18 +185,18 @@ export class ForgotPasswordComponent {
   onSubmit(): void {
     if (this.forgotForm.invalid) return;
 
-    this.isLoading = true;
-    this.errorMessage = '';
-    this.successMessage = '';
+    this.isLoading.set(true);
+    this.errorMessage.set('');
+    this.successMessage.set('');
 
     this.authService.forgotPassword(this.forgotForm.value.email).subscribe({
       next: res => {
-        this.isLoading = false;
-        this.successMessage = res.message || 'Nếu email tồn tại trong hệ thống, hướng dẫn đặt lại mật khẩu đã được gửi đến hòm thư của bạn.';
+        this.isLoading.set(false);
+        this.successMessage.set(res.message || 'Nếu email tồn tại trong hệ thống, hướng dẫn đặt lại mật khẩu đã được gửi đến hòm thư của bạn.');
       },
       error: err => {
-        this.isLoading = false;
-        this.errorMessage = err.error?.message || 'Đã có lỗi xảy ra khi xử lý yêu cầu.';
+        this.isLoading.set(false);
+        this.errorMessage.set(err.error?.message || 'Đã có lỗi xảy ra khi xử lý yêu cầu.');
       }
     });
   }

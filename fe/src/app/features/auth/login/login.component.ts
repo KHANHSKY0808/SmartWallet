@@ -1,4 +1,4 @@
-import { Component } from '@angular/core';
+import { Component, signal } from '@angular/core';
 import { CommonModule } from '@angular/common';
 import { FormBuilder, FormGroup, ReactiveFormsModule, Validators } from '@angular/forms';
 import { Router, RouterModule } from '@angular/router';
@@ -14,12 +14,12 @@ import { AuthService } from '../../../core/services/auth.service';
         <h2>Đăng nhập SmartWallet</h2>
         <p class="subtitle">Quản lý chi tiêu thông minh và hiệu quả</p>
 
-        <div *ngIf="errorMessage" class="alert alert-danger">
-          {{ errorMessage }}
+        <div *ngIf="errorMessage()" class="alert alert-danger">
+          {{ errorMessage() }}
         </div>
 
-        <div *ngIf="lockoutMessage" class="alert alert-warning">
-          <strong>⚠️ Tài khoản tạm khóa:</strong> {{ lockoutMessage }}
+        <div *ngIf="lockoutMessage()" class="alert alert-warning">
+          <strong>⚠️ Tài khoản tạm khóa:</strong> {{ lockoutMessage() }}
         </div>
 
         <form [formGroup]="loginForm" (ngSubmit)="onSubmit()">
@@ -56,9 +56,9 @@ import { AuthService } from '../../../core/services/auth.service';
             <a routerLink="/forgot-password" class="forgot-link">Quên mật khẩu?</a>
           </div>
 
-          <button type="submit" [disabled]="loginForm.invalid || isLoading" class="btn btn-primary">
-            <span *ngIf="!isLoading">Đăng nhập</span>
-            <span *ngIf="isLoading">Đang xử lý...</span>
+          <button type="submit" [disabled]="loginForm.invalid || isLoading()" class="btn btn-primary">
+            <span *ngIf="!isLoading()">Đăng nhập</span>
+            <span *ngIf="isLoading()">Đang xử lý...</span>
           </button>
         </form>
 
@@ -196,9 +196,9 @@ import { AuthService } from '../../../core/services/auth.service';
 })
 export class LoginComponent {
   loginForm: FormGroup;
-  isLoading = false;
-  errorMessage = '';
-  lockoutMessage = '';
+  isLoading = signal(false);
+  errorMessage = signal('');
+  lockoutMessage = signal('');
 
   constructor(
     private fb: FormBuilder,
@@ -218,23 +218,23 @@ export class LoginComponent {
   onSubmit(): void {
     if (this.loginForm.invalid) return;
 
-    this.isLoading = true;
-    this.errorMessage = '';
-    this.lockoutMessage = '';
+    this.isLoading.set(true);
+    this.errorMessage.set('');
+    this.lockoutMessage.set('');
 
     this.authService.login(this.loginForm.value).subscribe({
       next: () => {
-        this.isLoading = false;
+        this.isLoading.set(false);
         this.router.navigate(['/profile']);
       },
       error: err => {
-        this.isLoading = false;
+        this.isLoading.set(false);
         if (err.status === 423) {
-          this.lockoutMessage = err.error?.message || 'Tài khoản tạm thời bị khóa do nhập sai mật khẩu nhiều lần.';
+          this.lockoutMessage.set(err.error?.message || 'Tài khoản tạm thời bị khóa do nhập sai mật khẩu nhiều lần.');
         } else if (err.status === 403) {
-          this.errorMessage = err.error?.message || 'Tài khoản chưa được kích hoạt.';
+          this.errorMessage.set(err.error?.message || 'Tài khoản chưa được kích hoạt.');
         } else {
-          this.errorMessage = err.error?.message || 'Email hoặc mật khẩu không chính xác';
+          this.errorMessage.set(err.error?.message || 'Email hoặc mật khẩu không chính xác');
         }
       }
     });

@@ -1,4 +1,4 @@
-import { Component, OnInit } from '@angular/core';
+import { Component, OnInit, signal } from '@angular/core';
 import { CommonModule } from '@angular/common';
 import { FormBuilder, FormGroup, ReactiveFormsModule, Validators, AbstractControl } from '@angular/forms';
 import { AuthService } from '../../core/services/auth.service';
@@ -25,7 +25,7 @@ function passwordMatchValidator(control: AbstractControl): { [key: string]: bool
         <div class="card profile-summary">
           <div class="avatar-wrapper">
             <img
-              [src]="avatarPreview || profile?.avatarUrl || defaultAvatar"
+              [src]="avatarPreview() || profile()?.avatarUrl || defaultAvatar()"
               alt="Avatar"
               class="avatar-img"
             />
@@ -40,7 +40,7 @@ function passwordMatchValidator(control: AbstractControl): { [key: string]: bool
               />
             </label>
           </div>
-          <h3>{{ profile?.fullName || 'Người dùng SmartWallet' }}</h3>
+          <h3>{{ profile()?.fullName || 'Người dùng SmartWallet' }}</h3>
           <p class="text-muted">{{ authService.currentUser()?.email }}</p>
           <span class="badge">{{ authService.currentUserRole() || 'User' }}</span>
         </div>
@@ -48,11 +48,11 @@ function passwordMatchValidator(control: AbstractControl): { [key: string]: bool
         <!-- Nội dung chính: Cập nhật thông tin & Đổi mật khẩu -->
         <div class="main-content">
           <!-- Thông báo -->
-          <div *ngIf="successMessage" class="alert alert-success">
-            ✅ {{ successMessage }}
+          <div *ngIf="successMessage()" class="alert alert-success">
+            ✅ {{ successMessage() }}
           </div>
-          <div *ngIf="errorMessage" class="alert alert-danger">
-            ❌ {{ errorMessage }}
+          <div *ngIf="errorMessage()" class="alert alert-danger">
+            ❌ {{ errorMessage() }}
           </div>
 
           <!-- Form thông tin cá nhân -->
@@ -73,7 +73,7 @@ function passwordMatchValidator(control: AbstractControl): { [key: string]: bool
                 <div class="form-group col">
                   <label for="currency">Đơn vị tiền tệ chính</label>
                   <select id="currency" formControlName="defaultCurrency" class="form-control">
-                    <option *ngFor="let c of currencies" [value]="c.code">
+                    <option *ngFor="let c of currencies()" [value]="c.code">
                       {{ c.code }} ({{ c.symbol }}) - {{ c.name }}
                     </option>
                   </select>
@@ -88,9 +88,9 @@ function passwordMatchValidator(control: AbstractControl): { [key: string]: bool
                 </div>
               </div>
 
-              <button type="submit" [disabled]="profileForm.invalid || isUpdating" class="btn btn-primary">
-                <span *ngIf="!isUpdating">Lưu thông tin</span>
-                <span *ngIf="isUpdating">Đang lưu...</span>
+              <button type="submit" [disabled]="profileForm.invalid || isUpdating()" class="btn btn-primary">
+                <span *ngIf="!isUpdating()">Lưu thông tin</span>
+                <span *ngIf="isUpdating()">Đang lưu...</span>
               </button>
             </form>
           </div>
@@ -131,9 +131,9 @@ function passwordMatchValidator(control: AbstractControl): { [key: string]: bool
                 </div>
               </div>
 
-              <button type="submit" [disabled]="passwordForm.invalid || isChangingPassword" class="btn btn-secondary">
-                <span *ngIf="!isChangingPassword">Đổi mật khẩu</span>
-                <span *ngIf="isChangingPassword">Đang cập nhật...</span>
+              <button type="submit" [disabled]="passwordForm.invalid || isChangingPassword()" class="btn btn-secondary">
+                <span *ngIf="!isChangingPassword()">Đổi mật khẩu</span>
+                <span *ngIf="isChangingPassword()">Đang cập nhật...</span>
               </button>
             </form>
           </div>
@@ -291,24 +291,24 @@ function passwordMatchValidator(control: AbstractControl): { [key: string]: bool
   `]
 })
 export class ProfileComponent implements OnInit {
-  profile: UserProfile | null = null;
-  currencies: Currency[] = [
+  profile = signal<UserProfile | null>(null);
+  currencies = signal<Currency[]>([
     { code: 'VND', name: 'Việt Nam Đồng', symbol: '₫', isActive: true },
     { code: 'USD', name: 'Đô la Mỹ', symbol: '$', isActive: true },
     { code: 'EUR', name: 'Euro', symbol: '€', isActive: true },
     { code: 'JPY', name: 'Yên Nhật', symbol: '¥', isActive: true }
-  ];
+  ]);
 
   profileForm: FormGroup;
   passwordForm: FormGroup;
-  avatarPreview: string | null = null;
+  avatarPreview = signal<string | null>(null);
 
-  isUpdating = false;
-  isChangingPassword = false;
-  successMessage = '';
-  errorMessage = '';
+  isUpdating = signal(false);
+  isChangingPassword = signal(false);
+  successMessage = signal('');
+  errorMessage = signal('');
 
-  defaultAvatar = 'https://ui-avatars.com/api/?name=User&background=2563eb&color=fff';
+  defaultAvatar = signal('https://ui-avatars.com/api/?name=User&background=2563eb&color=fff');
 
   constructor(
     private fb: FormBuilder,
@@ -339,18 +339,18 @@ export class ProfileComponent implements OnInit {
   loadProfile(): void {
     this.profileService.getProfile().subscribe({
       next: p => {
-        this.profile = p;
+        this.profile.set(p);
         this.profileForm.patchValue({
           fullName: p.fullName,
           defaultCurrency: p.defaultCurrency,
           language: p.language
         });
         if (p.fullName) {
-          this.defaultAvatar = `https://ui-avatars.com/api/?name=${encodeURIComponent(p.fullName)}&background=2563eb&color=fff`;
+          this.defaultAvatar.set(`https://ui-avatars.com/api/?name=${encodeURIComponent(p.fullName)}&background=2563eb&color=fff`);
         }
       },
       error: err => {
-        this.errorMessage = 'Không thể tải thông tin hồ sơ người dùng';
+        this.errorMessage.set('Không thể tải thông tin hồ sơ người dùng');
       }
     });
   }
@@ -359,7 +359,7 @@ export class ProfileComponent implements OnInit {
     this.profileService.getCurrencies().subscribe({
       next: list => {
         if (list && list.length > 0) {
-          this.currencies = list;
+          this.currencies.set(list);
         }
       },
       error: () => {}
@@ -369,19 +369,19 @@ export class ProfileComponent implements OnInit {
   onUpdateProfile(): void {
     if (this.profileForm.invalid) return;
 
-    this.isUpdating = true;
-    this.successMessage = '';
-    this.errorMessage = '';
+    this.isUpdating.set(true);
+    this.successMessage.set('');
+    this.errorMessage.set('');
 
     this.profileService.updateProfile(this.profileForm.value).subscribe({
       next: updated => {
-        this.isUpdating = false;
-        this.profile = updated;
-        this.successMessage = 'Cập nhật thông tin hồ sơ thành công!';
+        this.isUpdating.set(false);
+        this.profile.set(updated);
+        this.successMessage.set('Cập nhật thông tin hồ sơ thành công!');
       },
       error: err => {
-        this.isUpdating = false;
-        this.errorMessage = err.error?.message || 'Lỗi khi cập nhật hồ sơ';
+        this.isUpdating.set(false);
+        this.errorMessage.set(err.error?.message || 'Lỗi khi cập nhật hồ sơ');
       }
     });
   }
@@ -392,17 +392,17 @@ export class ProfileComponent implements OnInit {
       const file = input.files[0];
 
       if (file.size > 5 * 1024 * 1024) {
-        this.errorMessage = 'Kích thước ảnh đại diện không được vượt quá 5MB';
+        this.errorMessage.set('Kích thước ảnh đại diện không được vượt quá 5MB');
         return;
       }
 
       this.profileService.uploadAvatar(file).subscribe({
         next: res => {
-          this.avatarPreview = res.avatarUrl;
-          this.successMessage = 'Tải ảnh đại diện thành công!';
+          this.avatarPreview.set(res.avatarUrl);
+          this.successMessage.set('Tải ảnh đại diện thành công!');
         },
         error: err => {
-          this.errorMessage = err.error?.message || 'Lỗi khi tải ảnh đại diện lên máy chủ';
+          this.errorMessage.set(err.error?.message || 'Lỗi khi tải ảnh đại diện lên máy chủ');
         }
       });
     }
@@ -411,19 +411,19 @@ export class ProfileComponent implements OnInit {
   onChangePassword(): void {
     if (this.passwordForm.invalid) return;
 
-    this.isChangingPassword = true;
-    this.successMessage = '';
-    this.errorMessage = '';
+    this.isChangingPassword.set(true);
+    this.successMessage.set('');
+    this.errorMessage.set('');
 
     this.authService.changePassword(this.passwordForm.value).subscribe({
       next: res => {
-        this.isChangingPassword = false;
-        this.successMessage = res.message || 'Đổi mật khẩu thành công!';
+        this.isChangingPassword.set(false);
+        this.successMessage.set(res.message || 'Đổi mật khẩu thành công!');
         this.passwordForm.reset();
       },
       error: err => {
-        this.isChangingPassword = false;
-        this.errorMessage = err.error?.message || 'Mật khẩu hiện tại không chính xác';
+        this.isChangingPassword.set(false);
+        this.errorMessage.set(err.error?.message || 'Mật khẩu hiện tại không chính xác');
       }
     });
   }

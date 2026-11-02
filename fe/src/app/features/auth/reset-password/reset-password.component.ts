@@ -1,4 +1,4 @@
-import { Component, OnInit } from '@angular/core';
+import { Component, OnInit, signal } from '@angular/core';
 import { CommonModule } from '@angular/common';
 import { FormBuilder, FormGroup, ReactiveFormsModule, Validators, AbstractControl } from '@angular/forms';
 import { ActivatedRoute, Router, RouterModule } from '@angular/router';
@@ -23,18 +23,18 @@ function passwordMatchValidator(control: AbstractControl): { [key: string]: bool
         <h2>Đặt lại mật khẩu mới</h2>
         <p class="subtitle">Tạo mật khẩu an toàn mới cho tài khoản của bạn</p>
 
-        <div *ngIf="successMessage" class="alert alert-success">
-          <strong>🎉 Thành công!</strong> {{ successMessage }}
+        <div *ngIf="successMessage()" class="alert alert-success">
+          <strong>🎉 Thành công!</strong> {{ successMessage() }}
           <div style="margin-top: 1rem;">
             <a routerLink="/login" class="btn btn-primary">Đăng nhập với mật khẩu mới</a>
           </div>
         </div>
 
-        <div *ngIf="errorMessage" class="alert alert-danger">
-          {{ errorMessage }}
+        <div *ngIf="errorMessage()" class="alert alert-danger">
+          {{ errorMessage() }}
         </div>
 
-        <form *ngIf="!successMessage" [formGroup]="resetForm" (ngSubmit)="onSubmit()">
+        <form *ngIf="!successMessage()" [formGroup]="resetForm" (ngSubmit)="onSubmit()">
           <div class="form-group">
             <label for="newPassword">Mật khẩu mới</label>
             <input
@@ -64,9 +64,9 @@ function passwordMatchValidator(control: AbstractControl): { [key: string]: bool
             </div>
           </div>
 
-          <button type="submit" [disabled]="resetForm.invalid || isLoading" class="btn btn-primary">
-            <span *ngIf="!isLoading">Xác nhận đổi mật khẩu</span>
-            <span *ngIf="isLoading">Đang lưu...</span>
+          <button type="submit" [disabled]="resetForm.invalid || isLoading()" class="btn btn-primary">
+            <span *ngIf="!isLoading()">Xác nhận đổi mật khẩu</span>
+            <span *ngIf="isLoading()">Đang lưu...</span>
           </button>
         </form>
 
@@ -195,9 +195,9 @@ function passwordMatchValidator(control: AbstractControl): { [key: string]: bool
 export class ResetPasswordComponent implements OnInit {
   resetForm: FormGroup;
   token = '';
-  isLoading = false;
-  errorMessage = '';
-  successMessage = '';
+  isLoading = signal(false);
+  errorMessage = signal('');
+  successMessage = signal('');
 
   constructor(
     private fb: FormBuilder,
@@ -216,7 +216,7 @@ export class ResetPasswordComponent implements OnInit {
   ngOnInit(): void {
     this.token = this.route.snapshot.queryParamMap.get('token') || '';
     if (!this.token) {
-      this.errorMessage = 'Không tìm thấy mã đặt lại mật khẩu trong liên kết.';
+      this.errorMessage.set('Không tìm thấy mã đặt lại mật khẩu trong liên kết.');
     }
   }
 
@@ -227,9 +227,9 @@ export class ResetPasswordComponent implements OnInit {
   onSubmit(): void {
     if (this.resetForm.invalid || !this.token) return;
 
-    this.isLoading = true;
-    this.errorMessage = '';
-    this.successMessage = '';
+    this.isLoading.set(true);
+    this.errorMessage.set('');
+    this.successMessage.set('');
 
     const payload = {
       token: this.token,
@@ -239,12 +239,12 @@ export class ResetPasswordComponent implements OnInit {
 
     this.authService.resetPassword(payload).subscribe({
       next: res => {
-        this.isLoading = false;
-        this.successMessage = res.message || 'Mật khẩu của bạn đã được đặt lại thành công!';
+        this.isLoading.set(false);
+        this.successMessage.set(res.message || 'Mật khẩu của bạn đã được đặt lại thành công!');
       },
       error: err => {
-        this.isLoading = false;
-        this.errorMessage = err.error?.message || 'Mã đặt lại mật khẩu không hợp lệ hoặc đã hết hạn.';
+        this.isLoading.set(false);
+        this.errorMessage.set(err.error?.message || 'Mã đặt lại mật khẩu không hợp lệ hoặc đã hết hạn.');
       }
     });
   }
