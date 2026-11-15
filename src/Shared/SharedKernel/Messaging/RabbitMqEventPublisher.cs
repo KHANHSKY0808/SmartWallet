@@ -33,8 +33,6 @@ public class RabbitMqEventPublisher : IEventPublisher, IDisposable
             NetworkRecoveryInterval = TimeSpan.FromSeconds(5),
             DispatchConsumersAsync = true
         };
-
-        EnsureConnection();
     }
 
     private bool EnsureConnection()

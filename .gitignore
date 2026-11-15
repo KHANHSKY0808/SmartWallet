@@ -44,3 +44,12 @@ Thumbs.db
 *.tmp
 *.log
 
+## --------------------------------------------------
+## User Uploads & Media (PII)
+## --------------------------------------------------
+uploads/
+**/uploads/
+src/Services/*/uploads/
+!**/uploads/.gitkeep
+
+

@@ -116,3 +116,96 @@ npm start      # ng serve, proxy /api -> http://localhost:8000 (fe/proxy.conf.js
 dotnet test SmartWallet.sln
 cd fe && npx ng test
 ```
+
+
+BƯỚC 1: Khởi động Hạ tầng (Docker)
+
+Mở PowerShell tại thư mục SmartWallet và chạy:
+
+powershell
+cd d:\Code\QLCT_SmartWallet\SmartWallet
+docker compose up -d
+
+Các cổng hạ tầng sẽ mở:
+
+Consul UI: http://localhost:8500
+ (Kiểm tra các service đã đăng ký)
+RabbitMQ UI: http://localhost:15672
+ (Tài khoản: guest / guest)
+MailHog Webmail: http://localhost:8025
+ (Hòm thư ảo xem link kích hoạt & reset mật khẩu)
+Redis: Cổng 6379
+📌 BƯỚC 2: Khởi động Backend (.NET 10)
+
+Trước tiên, build solution để đảm bảo mọi thư viện đã sẵn sàng:
+
+powershell
+dotnet build SmartWallet.sln
+
+Bạn có thể chọn 1 trong 2 cách sau:
+
+🔹 Cách A: Khởi động nhanh toàn bộ 13 services (Khuyên dùng)
+
+Mở một cửa sổ PowerShell mới tại thư mục SmartWallet và dán lệnh sau để tự động bật Gateway và tất cả 12 microservices:
+
+powershell
+Get-ChildItem -Path "src/Gateway/ApiGateway.Yarp", "src/Services/*" -Directory | ForEach-Object {
+    Start-Process wt -ArgumentList "dotnet", "run", "--project", "`"$($_.FullName)`"" -ErrorAction SilentlyContinue `
+    -ErrorVariable err
+    if ($err) {
+        Start-Process powershell -ArgumentList "-NoExit", "-Command", "dotnet run --project '$($_.FullName)'"
+    }
+}
+🔹 Cách B: Chỉ chạy các service cốt lõi của Sprint 1 (Nhẹ máy nhất)
+
+Để trải nghiệm trọn vẹn Đăng ký, Đăng nhập và Hồ sơ cá nhân của Sprint 1, bạn chỉ cần mở 3 cửa sổ terminal:
+
+Terminal 1 (Gateway :8000):
+powershell
+dotnet run --project src/Gateway/ApiGateway.Yarp
+Terminal 2 (Identity Service :8001):
+powershell
+dotnet run --project src/Services/IdentityService
+Terminal 3 (User Profile Service :8002):
+powershell
+dotnet run --project src/Services/UserProfileService
+📌 BƯỚC 3: Khởi động Frontend (Angular 21)
+
+Mở một terminal khác và chạy ứng dụng web:
+
+powershell
+cd d:\Code\QLCT_SmartWallet\SmartWallet\fe
+npm start
+
+Sau khi compile xong, giao diện web sẽ chạy tại: http://localhost:4200
+
+🎮 BƯỚC 4: Trải nghiệm các luồng tính năng Sprint 1
+
+Đăng ký tài khoản:
+
+Truy cập: http://localhost:4200/register
+Điền Email, Họ tên và Mật khẩu (ít nhất 8 ký tự).
+Nhấn Tạo tài khoản.
+
+Kích hoạt Email qua MailHog:
+
+Mở giao diện MailHog tại: http://localhost:8025
+Bạn sẽ thấy ngay email "SmartWallet - Xác nhận đăng ký tài khoản".
+Mở email và bấm vào nút Kích hoạt tài khoản (hoặc copy link xác nhận).
+
+Đăng nhập & Trải nghiệm Lockout:
+
+Vào: http://localhost:4200/login
+Thử nhập sai mật khẩu 5 lần: Hệ thống sẽ hiển thị cảnh báo tài khoản bị tạm khóa 15 phút.
+Nhập đúng mật khẩu: Đăng nhập thành công và tự động chuyển vào trang Hồ sơ cá nhân.
+
+Hồ sơ cá nhân & Upload Avatar:
+
+Trang cá nhân: http://localhost:4200/profile
+Cập nhật Họ tên, chọn tiền tệ mặc định (VND, USD, EUR, JPY).
+Tải lên ảnh đại diện (.png, .jpg).
+Đổi mật khẩu tài khoản trực tiếp trong form.
+
+Thử nghiệm Silent Refresh:
+
+Token có thời hạn 30 phút, nhưng nếu token hết hạn trong lúc đang thao tác, Angular Interceptor sẽ tự động gọi ngầm API làm mới token mà không làm gián đoạn hay bắt bạn phải đăng nhập lại.

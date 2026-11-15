@@ -21,6 +21,7 @@ public class AuthController : ControllerBase
     private readonly IEmailSender _emailSender;
     private readonly IEventPublisher? _eventPublisher;
     private readonly ILogger<AuthController> _logger;
+    private readonly string _frontendBaseUrl;
 
     public AuthController(
         IdentityDbContext context,
@@ -28,7 +29,8 @@ public class AuthController : ControllerBase
         ITokenService tokenService,
         IEmailSender emailSender,
         ILogger<AuthController> logger,
-        IEventPublisher? eventPublisher = null)
+        IEventPublisher? eventPublisher = null,
+        IConfiguration? configuration = null)
     {
         _context = context;
         _passwordHasher = passwordHasher;
@@ -36,6 +38,7 @@ public class AuthController : ControllerBase
         _emailSender = emailSender;
         _logger = logger;
         _eventPublisher = eventPublisher;
+        _frontendBaseUrl = (configuration?["App:FrontendBaseUrl"] ?? "http://localhost:4200").TrimEnd('/');
     }
 
     [HttpPost("register")]
@@ -87,7 +90,7 @@ public class AuthController : ControllerBase
         await _context.SaveChangesAsync();
 
         // Gửi email xác nhận
-        var confirmLink = $"http://localhost:4200/confirm-email?token={rawToken}";
+        var confirmLink = $"{_frontendBaseUrl}/confirm-email?token={rawToken}";
         var emailBody = $@"
             <h2>Chào mừng bạn đến với SmartWallet!</h2>
             <p>Vui lòng click vào liên kết bên dưới để kích hoạt tài khoản của bạn (liên kết có hiệu lực trong 24 giờ):</p>
@@ -165,13 +168,58 @@ public class AuthController : ControllerBase
             .ThenInclude(ur => ur.Role)
             .FirstOrDefaultAsync(u => u.Email.ToLower() == normalizedEmail);
 
-        if (user == null)
+        // H3: Xác thực mật khẩu TRƯỚC để chống User Enumeration
+        var isValidPassword = user != null && _passwordHasher.VerifyPassword(request.Password, user.PasswordHash);
+
+        if (!isValidPassword)
         {
+            if (user != null)
+            {
+                // Nếu tài khoản đang trong thời gian bị khóa do brute-force trước đó
+                if (user.LockoutEnd.HasValue && user.LockoutEnd.Value > DateTime.UtcNow)
+                {
+                    var remainingMinutes = Math.Ceiling((user.LockoutEnd.Value - DateTime.UtcNow).TotalMinutes);
+                    return StatusCode(423, new
+                    {
+                        message = $"Tài khoản bị khóa 15 phút do nhập sai mật khẩu nhiều lần. Vui lòng thử lại sau {remainingMinutes} phút.",
+                        lockoutEnd = user.LockoutEnd
+                    });
+                }
+
+                // Nếu thời gian khóa cũ đã hết, reset
+                if (user.LockoutEnd.HasValue && user.LockoutEnd.Value <= DateTime.UtcNow)
+                {
+                    user.LockoutEnd = null;
+                    user.FailedLoginAttempts = 0;
+                }
+
+                user.FailedLoginAttempts++;
+                if (user.FailedLoginAttempts >= 5)
+                {
+                    user.LockoutEnd = DateTime.UtcNow.AddMinutes(15);
+                    user.FailedLoginAttempts = 0;
+                    await _context.SaveChangesAsync();
+
+                    return StatusCode(423, new
+                    {
+                        message = "Tài khoản bị khóa 15 phút do nhập sai mật khẩu 5 lần liên tiếp.",
+                        lockoutEnd = user.LockoutEnd
+                    });
+                }
+
+                await _context.SaveChangesAsync();
+                return Unauthorized(new
+                {
+                    message = "Email hoặc mật khẩu không chính xác",
+                    remainingAttempts = 5 - user.FailedLoginAttempts
+                });
+            }
+
             return Unauthorized(new { message = "Email hoặc mật khẩu không chính xác" });
         }
 
-        // Kiểm tra khóa tài khoản 15 phút
-        if (user.LockoutEnd.HasValue)
+        // Mật khẩu đúng -> Kiểm tra các trạng thái tài khoản
+        if (user!.LockoutEnd.HasValue)
         {
             if (user.LockoutEnd.Value > DateTime.UtcNow)
             {
@@ -184,7 +232,6 @@ public class AuthController : ControllerBase
             }
             else
             {
-                // Hết thời gian khóa -> tự động mở lại
                 user.LockoutEnd = null;
                 user.FailedLoginAttempts = 0;
             }
@@ -200,31 +247,6 @@ public class AuthController : ControllerBase
             return StatusCode(423, new { message = "Tài khoản đã bị vô hiệu hóa bởi quản trị viên." });
         }
 
-        var isValidPassword = _passwordHasher.VerifyPassword(request.Password, user.PasswordHash);
-        if (!isValidPassword)
-        {
-            user.FailedLoginAttempts++;
-            if (user.FailedLoginAttempts >= 5)
-            {
-                user.LockoutEnd = DateTime.UtcNow.AddMinutes(15);
-                user.FailedLoginAttempts = 0;
-                await _context.SaveChangesAsync();
-
-                return StatusCode(423, new
-                {
-                    message = "Tài khoản bị khóa 15 phút do nhập sai mật khẩu 5 lần liên tiếp.",
-                    lockoutEnd = user.LockoutEnd
-                });
-            }
-
-            await _context.SaveChangesAsync();
-            return Unauthorized(new
-            {
-                message = "Email hoặc mật khẩu không chính xác",
-                remainingAttempts = 5 - user.FailedLoginAttempts
-            });
-        }
-
         // Đăng nhập thành công -> Reset số lần đăng nhập sai
         user.FailedLoginAttempts = 0;
         user.LockoutEnd = null;
@@ -232,6 +254,7 @@ public class AuthController : ControllerBase
         var roles = user.UserRoles.Select(ur => ur.Role.Name).ToList();
         if (roles.Count == 0)
         {
+            _logger.LogWarning("User {UserId} has no assigned roles. Falling back to default 'User' role.", user.Id);
             roles.Add("User");
         }
 
@@ -280,6 +303,7 @@ public class AuthController : ControllerBase
         var roles = token.User.UserRoles.Select(ur => ur.Role.Name).ToList();
         if (roles.Count == 0)
         {
+            _logger.LogWarning("User {UserId} has no assigned roles on refresh. Falling back to default 'User' role.", token.User.Id);
             roles.Add("User");
         }
 
@@ -350,7 +374,7 @@ public class AuthController : ControllerBase
             _context.UserTokens.Add(userToken);
             await _context.SaveChangesAsync();
 
-            var resetLink = $"http://localhost:4200/reset-password?token={rawToken}";
+            var resetLink = $"{_frontendBaseUrl}/reset-password?token={rawToken}";
             var emailBody = $@"
                 <h2>Yêu cầu đặt lại mật khẩu</h2>
                 <p>Bạn vừa yêu cầu đặt lại mật khẩu cho tài khoản SmartWallet.</p>
@@ -431,6 +455,16 @@ public class AuthController : ControllerBase
 
         user.PasswordHash = _passwordHasher.HashPassword(request.NewPassword);
         user.UpdatedAt = DateTime.UtcNow;
+
+        // Thu hồi toàn bộ RefreshToken cũ của user khi đổi mật khẩu (M1)
+        var activeTokens = await _context.RefreshTokens
+            .Where(r => r.UserId == user.Id && !r.IsRevoked)
+            .ToListAsync();
+
+        foreach (var t in activeTokens)
+        {
+            t.IsRevoked = true;
+        }
 
         await _context.SaveChangesAsync();
 

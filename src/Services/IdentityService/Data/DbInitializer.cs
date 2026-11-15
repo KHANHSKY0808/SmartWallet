@@ -9,7 +9,9 @@ public static class DbInitializer
     {
         try
         {
-            await context.Database.EnsureCreatedAsync();
+            await context.Database.MigrateAsync();
+            await context.Database.ExecuteSqlRawAsync("PRAGMA journal_mode = WAL;");
+            logger.LogInformation("Applied EF Core Migrations and set SQLite WAL mode for Identity DB");
 
             // Seed Roles
             if (!await context.Roles.AnyAsync())

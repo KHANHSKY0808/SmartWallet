@@ -124,6 +124,24 @@ public class ProfileService : IProfileService
         var profile = await _context.UserProfiles.FindAsync(userId);
         if (profile != null)
         {
+            // Xóa file avatar cũ nếu tồn tại (M9)
+            if (!string.IsNullOrEmpty(profile.AvatarUrl))
+            {
+                var oldFileName = Path.GetFileName(profile.AvatarUrl);
+                var oldFilePath = Path.Combine(uploadsPath, oldFileName);
+                if (File.Exists(oldFilePath))
+                {
+                    try
+                    {
+                        File.Delete(oldFilePath);
+                    }
+                    catch (Exception ex)
+                    {
+                        _logger.LogWarning(ex, "Could not delete old avatar file {OldFilePath}", oldFilePath);
+                    }
+                }
+            }
+
             profile.AvatarUrl = avatarUrl;
             profile.UpdatedAt = DateTime.UtcNow;
             await _context.SaveChangesAsync();

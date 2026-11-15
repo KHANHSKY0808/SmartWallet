@@ -1,8 +1,11 @@
 import { HttpInterceptorFn, HttpErrorResponse } from '@angular/common/http';
 import { inject } from '@angular/core';
 import { Router } from '@angular/router';
-import { catchError, switchMap, throwError } from 'rxjs';
+import { BehaviorSubject, catchError, filter, switchMap, take, throwError } from 'rxjs';
 import { AuthService } from '../services/auth.service';
+
+let isRefreshing = false;
+const refreshTokenSubject = new BehaviorSubject<string | null>(null);
 
 export const authInterceptor: HttpInterceptorFn = (req, next) => {
   const authService = inject(AuthService);
@@ -29,22 +32,45 @@ export const authInterceptor: HttpInterceptorFn = (req, next) => {
                         req.url.includes('/api/auth/confirm-email');
 
       if (error.status === 401 && !isAuthUrl && authService.getRefreshToken()) {
-        // Thực hiện Silent Refresh Token khi nhận lỗi 401
-        return authService.refreshToken().pipe(
-          switchMap(response => {
-            const retryReq = req.clone({
-              setHeaders: {
-                Authorization: `Bearer ${response.accessToken}`
-              }
-            });
-            return next(retryReq);
-          }),
-          catchError(refreshError => {
-            authService.clearSession();
-            router.navigate(['/login']);
-            return throwError(() => refreshError);
-          })
-        );
+        if (!isRefreshing) {
+          isRefreshing = true;
+          refreshTokenSubject.next(null);
+
+          return authService.refreshToken().pipe(
+            switchMap(response => {
+              isRefreshing = false;
+              refreshTokenSubject.next(response.accessToken);
+
+              const retryReq = req.clone({
+                setHeaders: {
+                  Authorization: `Bearer ${response.accessToken}`
+                }
+              });
+              return next(retryReq);
+            }),
+            catchError(refreshError => {
+              isRefreshing = false;
+              refreshTokenSubject.next(null);
+              authService.clearSession();
+              router.navigate(['/login']);
+              return throwError(() => refreshError);
+            })
+          );
+        } else {
+          // Nếu đang có request refresh chạy dở -> xếp hàng chờ token mới
+          return refreshTokenSubject.pipe(
+            filter(newToken => newToken !== null),
+            take(1),
+            switchMap(newToken => {
+              const retryReq = req.clone({
+                setHeaders: {
+                  Authorization: `Bearer ${newToken}`
+                }
+              });
+              return next(retryReq);
+            })
+          );
+        }
       }
 
       if (error.status === 401 && !isAuthUrl) {

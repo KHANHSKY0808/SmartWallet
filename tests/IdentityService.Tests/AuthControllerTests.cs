@@ -269,6 +269,93 @@ public class AuthControllerTests : IDisposable
         Assert.True(revokedOld.IsRevoked);
     }
 
+    [Fact]
+    public async Task Login_PendingConfirmUser_WithWrongPassword_ShouldReturn401Unauthorized_ToPreventEnumeration()
+    {
+        // Arrange - User chưa kích hoạt email
+        var user = new User
+        {
+            Id = Guid.NewGuid(),
+            Email = "pending@example.com",
+            PasswordHash = _passwordHasher.HashPassword("RealSecretPassword123"),
+            Status = UserStatus.PendingConfirm
+        };
+        _context.Users.Add(user);
+        await _context.SaveChangesAsync();
+
+        var request = new LoginRequest
+        {
+            Email = "pending@example.com",
+            Password = "WrongPasswordGuess"
+        };
+
+        // Act
+        var result = await _controller.Login(request);
+
+        // Assert - Phải trả về 401 chứ không được trả 403 để chống Enumeration (H3)
+        var unauthResult = Assert.IsType<UnauthorizedObjectResult>(result);
+        Assert.Equal(401, unauthResult.StatusCode);
+    }
+
+    [Fact]
+    public async Task ChangePassword_ShouldRevokeAllExistingRefreshTokens()
+    {
+        // Arrange
+        var currentPassword = "CurrentPassword123@";
+        var user = new User
+        {
+            Id = Guid.NewGuid(),
+            Email = "changepass@example.com",
+            PasswordHash = _passwordHasher.HashPassword(currentPassword),
+            Status = UserStatus.Active
+        };
+
+        var token1 = new RefreshToken
+        {
+            Id = Guid.NewGuid(),
+            UserId = user.Id,
+            Token = "token-1",
+            ExpiresAt = DateTime.UtcNow.AddDays(7),
+            IsRevoked = false
+        };
+        var token2 = new RefreshToken
+        {
+            Id = Guid.NewGuid(),
+            UserId = user.Id,
+            Token = "token-2",
+            ExpiresAt = DateTime.UtcNow.AddDays(7),
+            IsRevoked = false
+        };
+
+        _context.Users.Add(user);
+        _context.RefreshTokens.AddRange(token1, token2);
+        await _context.SaveChangesAsync();
+
+        // Giả lập ClaimsPrincipal cho user đã đăng nhập
+        var claims = new System.Security.Claims.ClaimsPrincipal(
+            new System.Security.Claims.ClaimsIdentity(
+                new[] { new System.Security.Claims.Claim(System.Security.Claims.ClaimTypes.NameIdentifier, user.Id.ToString()) },
+                "TestAuth"
+            )
+        );
+        _controller.ControllerContext = new ControllerContext { HttpContext = new Microsoft.AspNetCore.Http.DefaultHttpContext { User = claims } };
+
+        var request = new ChangePasswordRequest
+        {
+            CurrentPassword = currentPassword,
+            NewPassword = "NewStrongPassword456@",
+            ConfirmPassword = "NewStrongPassword456@"
+        };
+
+        // Act
+        var result = await _controller.ChangePassword(request);
+
+        // Assert (M1)
+        Assert.IsType<OkObjectResult>(result);
+        var updatedTokens = await _context.RefreshTokens.Where(r => r.UserId == user.Id).ToListAsync();
+        Assert.All(updatedTokens, t => Assert.True(t.IsRevoked));
+    }
+
     public void Dispose()
     {
         _context.Dispose();
