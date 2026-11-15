@@ -91,3 +91,4 @@ describe('RegisterComponent', () => {
     expect(component.isLoading()).toBe(false);
   });
 });
+
