@@ -47,6 +47,17 @@ public class ProfileService : IProfileService
 
     public async Task<UserProfileDto> UpdateProfileAsync(Guid userId, UpdateProfileRequest request)
     {
+        string? targetCurrency = null;
+        if (!string.IsNullOrWhiteSpace(request.DefaultCurrency))
+        {
+            targetCurrency = request.DefaultCurrency.Trim().ToUpperInvariant();
+            var currencyExists = await _context.Currencies.AnyAsync(c => c.Code == targetCurrency && c.IsActive);
+            if (!currencyExists)
+            {
+                throw new ArgumentException($"Đơn vị tiền tệ '{targetCurrency}' không hợp lệ hoặc không được hỗ trợ");
+            }
+        }
+
         var profile = await _context.UserProfiles.FindAsync(userId);
         if (profile == null)
         {
@@ -55,7 +66,7 @@ public class ProfileService : IProfileService
             {
                 UserId = userId,
                 FullName = request.FullName.Trim(),
-                DefaultCurrency = string.IsNullOrWhiteSpace(request.DefaultCurrency) ? "VND" : request.DefaultCurrency.Trim().ToUpperInvariant(),
+                DefaultCurrency = targetCurrency ?? "VND",
                 Language = string.IsNullOrWhiteSpace(request.Language) ? "vi" : request.Language.Trim().ToLowerInvariant(),
                 CreatedAt = DateTime.UtcNow,
                 UpdatedAt = DateTime.UtcNow
@@ -65,9 +76,9 @@ public class ProfileService : IProfileService
         else
         {
             profile.FullName = request.FullName.Trim();
-            if (!string.IsNullOrWhiteSpace(request.DefaultCurrency))
+            if (targetCurrency != null)
             {
-                profile.DefaultCurrency = request.DefaultCurrency.Trim().ToUpperInvariant();
+                profile.DefaultCurrency = targetCurrency;
             }
             if (!string.IsNullOrWhiteSpace(request.Language))
             {
@@ -132,7 +143,22 @@ public class ProfileService : IProfileService
         var avatarUrl = $"/uploads/avatars/{fileName}";
 
         var profile = await _context.UserProfiles.FindAsync(userId);
-        if (profile != null)
+        if (profile == null)
+        {
+            // Tự động khởi tạo hồ sơ nếu user upload avatar trước khi hồ sơ được tạo
+            profile = new UserProfile
+            {
+                UserId = userId,
+                FullName = "Người dùng",
+                DefaultCurrency = "VND",
+                Language = "vi",
+                AvatarUrl = avatarUrl,
+                CreatedAt = DateTime.UtcNow,
+                UpdatedAt = DateTime.UtcNow
+            };
+            _context.UserProfiles.Add(profile);
+        }
+        else
         {
             // Xóa file avatar cũ nếu tồn tại (M9)
             if (!string.IsNullOrEmpty(profile.AvatarUrl))
@@ -154,8 +180,9 @@ public class ProfileService : IProfileService
 
             profile.AvatarUrl = avatarUrl;
             profile.UpdatedAt = DateTime.UtcNow;
-            await _context.SaveChangesAsync();
         }
+
+        await _context.SaveChangesAsync();
 
         return avatarUrl;
     }

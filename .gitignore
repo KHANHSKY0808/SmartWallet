@@ -8,6 +8,8 @@ obj/
 [Oo]bj/
 [Dd]ebug/
 [Rr]elease/
+[Tt]est[Rr]esults/
+coverage.cobertura.xml
 *.user
 *.userosscache
 *.sln.docstates

@@ -21,13 +21,13 @@ public static class RabbitMqTopology
         return dict;
     }
 
-    public static Dictionary<string, object> GetRetryQueueArguments(string exchangeName = DefaultExchange, string routingKey = "", int ttlMs = DefaultRetryTtlMs)
+    public static Dictionary<string, object> GetRetryQueueArguments(string queueName, int ttlMs = DefaultRetryTtlMs)
     {
         return new Dictionary<string, object>
         {
             { "x-message-ttl", ttlMs },
-            { "x-dead-letter-exchange", exchangeName },
-            { "x-dead-letter-routing-key", routingKey }
+            { "x-dead-letter-exchange", "" },
+            { "x-dead-letter-routing-key", queueName }
         };
     }
 
@@ -41,7 +41,7 @@ public static class RabbitMqTopology
         var dlqQueue = $"{queueName}.dlq";
         var retryQueue = $"{queueName}.retry";
 
-        var retryArgs = GetRetryQueueArguments(exchangeName, routingKey);
+        var retryArgs = GetRetryQueueArguments(queueName);
         var mainArgs = GetMainQueueArguments(exchangeName, routingKey);
 
         if (channel != null)

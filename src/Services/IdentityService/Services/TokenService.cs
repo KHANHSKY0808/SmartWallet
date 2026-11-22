@@ -29,6 +29,11 @@ public class TokenService : ITokenService
         var signingKey = _configuration["Jwt:SigningKey"];
         if (string.IsNullOrWhiteSpace(signingKey))
         {
+            signingKey = _configuration["JWT_SIGNING_KEY"]
+                ?? Environment.GetEnvironmentVariable("JWT_SIGNING_KEY");
+        }
+        if (string.IsNullOrWhiteSpace(signingKey))
+        {
             throw new InvalidOperationException("Jwt:SigningKey is not configured.");
         }
 

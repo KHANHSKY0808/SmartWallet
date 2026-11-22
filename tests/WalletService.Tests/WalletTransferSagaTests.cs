@@ -54,13 +54,18 @@ public class WalletTransferSagaTests : IDisposable
 
     private void SetCurrentUser(Guid userId)
     {
+        SetCurrentUser(_controller, userId);
+    }
+
+    private static void SetCurrentUser(WalletsController controller, Guid userId)
+    {
         var claims = new ClaimsPrincipal(new ClaimsIdentity(new[]
         {
             new Claim(ClaimTypes.NameIdentifier, userId.ToString()),
             new Claim("sub", userId.ToString())
         }, "TestAuth"));
 
-        _controller.ControllerContext = new ControllerContext
+        controller.ControllerContext = new ControllerContext
         {
             HttpContext = new DefaultHttpContext { User = claims }
         };
@@ -160,6 +165,37 @@ public class WalletTransferSagaTests : IDisposable
         Assert.Equal(8_000_000m, (await _context.Wallets.FindAsync(bank))!.Balance);
         Assert.Equal(1, await _context.WalletTransfers.CountAsync());
         Assert.Single(_publisher.Published.OfType<(IntegrationEvent, string)>());
+    }
+
+    [Fact]
+    public async Task T03b_Transfer_ConcurrentDoubleSubmit_SameKey_DoesNotReturn500()
+    {
+        var (bank, cash) = await SeedWallets(_userA, 10_000_000m, 5_000_000m);
+        var key = Guid.NewGuid().ToString();
+        var body = new TransferRequest { FromWalletId = bank, ToWalletId = cash, Amount = 2_000_000m };
+
+        var ctx1 = NewContext();
+        var ctrl1 = new WalletsController(ctx1, new WalletLedger(ctx1), _profileClient, NullLogger<WalletsController>.Instance, _publisher);
+        SetCurrentUser(ctrl1, _userA);
+
+        var ctx2 = NewContext();
+        var ctrl2 = new WalletsController(ctx2, new WalletLedger(ctx2), _profileClient, NullLogger<WalletsController>.Instance, _publisher);
+        SetCurrentUser(ctrl2, _userA);
+
+        var task1 = ctrl1.Transfer(key, body);
+        var task2 = ctrl2.Transfer(key, body);
+
+        var results = await Task.WhenAll(task1, task2);
+
+        foreach (var r in results)
+        {
+            var status = (r as ObjectResult)?.StatusCode ?? 200;
+            Assert.True(status < 500, $"Status was {status}, expected < 500");
+        }
+
+        var freshCtx = NewContext();
+        var finalBank = await freshCtx.Wallets.FindAsync(bank);
+        Assert.Equal(8_000_000m, finalBank!.Balance);
     }
 
     [Fact]

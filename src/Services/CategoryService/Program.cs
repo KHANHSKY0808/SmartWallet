@@ -36,7 +36,7 @@ using (var scope = app.Services.CreateScope())
     {
         Directory.CreateDirectory(dir);
     }
-    context.Database.EnsureCreated();
+    context.Database.Migrate();
     await DefaultCategorySeeder.SeedAsync(context, app.Logger);
 }
 

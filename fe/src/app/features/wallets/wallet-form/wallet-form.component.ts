@@ -74,9 +74,6 @@ import { WalletService } from '../../../core/services/wallet.service';
             <label for="currency">Đơn vị tiền tệ</label>
             <select id="currency" formControlName="currency" class="form-control">
               <option value="VND">VND (Việt Nam Đồng)</option>
-              <option value="USD">USD (Đô la Mỹ)</option>
-              <option value="EUR">EUR (Euro)</option>
-              <option value="JPY">JPY (Yên Nhật)</option>
             </select>
           </div>
 

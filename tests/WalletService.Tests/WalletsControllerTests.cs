@@ -376,7 +376,8 @@ public class WalletsControllerTests : IDisposable
     public async Task W19_GetTotalAssets_WithForeignCurrency_ConvertsCorrectly()
     {
         await _controller.CreateWallet(new CreateWalletRequest { Name = "Ví VND", Type = 1, InitialBalance = 1_000_000m, Currency = "VND" });
-        await _controller.CreateWallet(new CreateWalletRequest { Name = "Ví USD", Type = 2, InitialBalance = 100m, Currency = "USD" });
+        _context.Wallets.Add(new Wallet { UserId = _userA, Name = "Ví USD", Type = WalletType.Bank, Balance = 100m, InitialBalance = 100m, Currency = "USD" });
+        await _context.SaveChangesAsync();
 
         _profileClient.Rates["USD"] = 25_000m;
 
@@ -390,7 +391,8 @@ public class WalletsControllerTests : IDisposable
     public async Task W20_GetTotalAssets_MissingRate_ExcludesWalletWithout500()
     {
         await _controller.CreateWallet(new CreateWalletRequest { Name = "Ví VND", Type = 1, InitialBalance = 1_000_000m, Currency = "VND" });
-        await _controller.CreateWallet(new CreateWalletRequest { Name = "Ví USD", Type = 2, InitialBalance = 100m, Currency = "USD" });
+        _context.Wallets.Add(new Wallet { UserId = _userA, Name = "Ví USD", Type = WalletType.Bank, Balance = 100m, InitialBalance = 100m, Currency = "USD" });
+        await _context.SaveChangesAsync();
 
         // Không có tỷ giá USD
         _profileClient.Rates.Clear();
@@ -407,7 +409,8 @@ public class WalletsControllerTests : IDisposable
     public async Task W21_GetTotalAssets_ProfileTimeout_SetsFlagAndReturnsVndSum()
     {
         await _controller.CreateWallet(new CreateWalletRequest { Name = "Ví VND", Type = 1, InitialBalance = 2_000_000m, Currency = "VND" });
-        await _controller.CreateWallet(new CreateWalletRequest { Name = "Ví EUR", Type = 2, InitialBalance = 100m, Currency = "EUR" });
+        _context.Wallets.Add(new Wallet { UserId = _userA, Name = "Ví EUR", Type = WalletType.Bank, Balance = 100m, InitialBalance = 100m, Currency = "EUR" });
+        await _context.SaveChangesAsync();
 
         _profileClient.SimulateTimeout = true;
 
@@ -416,6 +419,42 @@ public class WalletsControllerTests : IDisposable
         var total = Assert.IsType<TotalAssetsResponse>(totalRes.Value);
         Assert.Equal(2_000_000m, total.TotalAssetsVnd);
         Assert.True(total.RatesUnavailable);
+    }
+
+    [Fact]
+    public async Task W24_CreateOrUpdateWallet_NonVndCurrency_Returns400UnsupportedCurrency()
+    {
+        // 1. Create with USD -> 400 UNSUPPORTED_CURRENCY
+        var createRes = await _controller.CreateWallet(new CreateWalletRequest
+        {
+            Name = "Ví USD",
+            Type = 2,
+            InitialBalance = 100m,
+            Currency = "USD"
+        }) as BadRequestObjectResult;
+
+        Assert.NotNull(createRes);
+        Assert.Equal(400, createRes.StatusCode);
+
+        // 2. Create VND wallet then PUT EUR -> 400 UNSUPPORTED_CURRENCY
+        var vndRes = await _controller.CreateWallet(new CreateWalletRequest
+        {
+            Name = "Ví VND",
+            Type = 1,
+            InitialBalance = 0m,
+            Currency = "VND"
+        }) as ObjectResult;
+        Assert.NotNull(vndRes);
+        var created = Assert.IsType<WalletDto>(vndRes.Value);
+
+        var putRes = await _controller.UpdateWallet(created.Id, new UpdateWalletRequest
+        {
+            Name = "Ví VND Sửa",
+            Currency = "EUR"
+        }) as BadRequestObjectResult;
+
+        Assert.NotNull(putRes);
+        Assert.Equal(400, putRes.StatusCode);
     }
 
     [Fact]

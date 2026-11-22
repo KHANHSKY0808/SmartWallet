@@ -53,106 +53,153 @@ public abstract class BaseRabbitMqConsumer<TEvent> : BackgroundService where TEv
         }
     }
 
-    protected override Task ExecuteAsync(CancellationToken stoppingToken)
+    protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
         if (_connectionFactory is null)
         {
-            return Task.CompletedTask;
+            return;
         }
 
-        try
+        while (!stoppingToken.IsCancellationRequested)
         {
-            _connection = _connectionFactory.CreateConnection();
-            _channel = _connection.CreateModel();
-
-            // Khởi tạo topology RabbitMQ chuẩn (DLX, DLQ, Retry queue TTL, Main queue) thông qua helper dùng chung
-            RabbitMqTopology.DeclareConsumerQueue(_channel, _queueName, _routingKey, _exchangeName);
-
-            // Giới hạn prefetch để xử lý công bằng giữa các consumer instances
-            _channel.BasicQos(prefetchSize: 0, prefetchCount: 10, global: false);
-
-            var consumer = new AsyncEventingBasicConsumer(_channel);
-            consumer.Received += async (sender, ea) =>
+            try
             {
-                var body = ea.Body.ToArray();
-                var json = Encoding.UTF8.GetString(body);
+                _connection = _connectionFactory.CreateConnection();
+                _channel = _connection.CreateModel();
 
+                // Khởi tạo topology RabbitMQ chuẩn (DLX, DLQ, Retry queue TTL, Main queue) thông qua helper dùng chung
+                RabbitMqTopology.DeclareConsumerQueue(_channel, _queueName, _routingKey, _exchangeName);
+
+                // Giới hạn prefetch để xử lý công bằng giữa các consumer instances
+                _channel.BasicQos(prefetchSize: 0, prefetchCount: 10, global: false);
+
+                var consumer = new AsyncEventingBasicConsumer(_channel);
+                consumer.Received += async (sender, ea) =>
+                {
+                    var body = ea.Body.ToArray();
+                    var json = Encoding.UTF8.GetString(body);
+
+                    try
+                    {
+                        var @event = JsonSerializer.Deserialize<TEvent>(json);
+                        if (@event is null)
+                        {
+                            _logger.LogWarning("Nhận message rỗng hoặc không thể parse JSON trên queue {QueueName}. Chuyển vào DLQ.", _queueName);
+                            _channel.BasicNack(deliveryTag: ea.DeliveryTag, multiple: false, requeue: false);
+                            return;
+                        }
+
+                        var eventId = @event.Id.ToString();
+
+                        // Hook Idempotency Check: Ngăn chặn xử lý trùng lặp sự kiện
+                        if (await IsEventProcessedAsync(eventId, stoppingToken))
+                        {
+                            _logger.LogWarning("Sự kiện {EventType} (ID: {EventId}) đã được xử lý trước đó. Bỏ qua và ACK.", @event.EventType, eventId);
+                            _channel.BasicAck(deliveryTag: ea.DeliveryTag, multiple: false);
+                            return;
+                        }
+
+                        // Thực thi nghiệp vụ domain
+                        await ProcessEventAsync(@event, stoppingToken);
+
+                        // Hook Idempotency Mark: Lưu vết đã xử lý thành công
+                        await MarkEventProcessedAsync(eventId, stoppingToken);
+
+                        // Xác nhận xử lý thành công (ACK)
+                        _channel.BasicAck(deliveryTag: ea.DeliveryTag, multiple: false);
+                    }
+                    catch (Exception ex)
+                    {
+                        _logger.LogError(ex, "Lỗi khi xử lý sự kiện từ queue {QueueName}.", _queueName);
+
+                        // D15: Retry tối đa 3 lần qua retry queue có TTL, sau đó đẩy sang DLQ
+                        var currentRetries = RabbitMqRetryHelper.GetRetryCount(ea.BasicProperties?.Headers);
+                        if (RabbitMqRetryHelper.ShouldRetry(currentRetries, out var nextRetries))
+                        {
+                            _logger.LogWarning("Thử lại xử lý sự kiện (Lần {NextRetries}/{MaxRetries}) qua retry queue cho queue {QueueName}.",
+                                nextRetries, RabbitMqRetryHelper.MaxRetryAttempts, _queueName);
+
+                            var retryProps = _channel.CreateBasicProperties();
+                            retryProps.Persistent = true;
+                            if (!string.IsNullOrEmpty(ea.BasicProperties?.MessageId))
+                            {
+                                retryProps.MessageId = ea.BasicProperties.MessageId;
+                            }
+                            if (!string.IsNullOrEmpty(ea.BasicProperties?.CorrelationId))
+                            {
+                                retryProps.CorrelationId = ea.BasicProperties.CorrelationId;
+                            }
+                            var headers = ea.BasicProperties?.Headers != null
+                                ? new Dictionary<string, object>(ea.BasicProperties.Headers)
+                                : new Dictionary<string, object>();
+                            headers[RabbitMqRetryHelper.RetryCountHeader] = nextRetries;
+                            retryProps.Headers = headers;
+
+                            _channel.BasicPublish(
+                                exchange: "",
+                                routingKey: $"{_queueName}.retry",
+                                basicProperties: retryProps,
+                                body: ea.Body
+                            );
+
+                            _channel.BasicAck(deliveryTag: ea.DeliveryTag, multiple: false);
+                        }
+                        else
+                        {
+                            _logger.LogWarning("Đã thử lại {MaxRetries} lần thất bại trên queue {QueueName}. Đẩy message vào DLQ ({DlxExchange}).",
+                                RabbitMqRetryHelper.MaxRetryAttempts, _queueName, _dlxExchangeName);
+
+                            _channel.BasicNack(deliveryTag: ea.DeliveryTag, multiple: false, requeue: false);
+                        }
+                    }
+                };
+
+                _channel.BasicConsume(queue: _queueName, autoAck: false, consumer: consumer);
+                _logger.LogInformation("Khởi động consumer thành công cho queue '{QueueName}' (RoutingKey: '{RoutingKey}') kèm DLQ '{Dlq}'.",
+                    _queueName, _routingKey, _dlqQueueName);
+
+                // Giữ kết nối hoạt động cho tới khi cancellation token hủy hoặc mất kết nối
+                var tcs = new TaskCompletionSource<bool>();
+                using (stoppingToken.Register(() => tcs.TrySetResult(true)))
+                {
+                    _connection.ConnectionShutdown += (s, e) =>
+                    {
+                        tcs.TrySetResult(false);
+                    };
+                    await tcs.Task;
+                }
+
+                if (stoppingToken.IsCancellationRequested)
+                {
+                    break;
+                }
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex, "Không thể kết nối RabbitMQ để lắng nghe queue {QueueName}. Sẽ thử lại sau 5 giây.", _queueName);
+            }
+
+            try
+            {
+                _channel?.Dispose();
+                _channel = null;
+                _connection?.Dispose();
+                _connection = null;
+            }
+            catch { }
+
+            if (!stoppingToken.IsCancellationRequested)
+            {
                 try
                 {
-                    var @event = JsonSerializer.Deserialize<TEvent>(json);
-                    if (@event is null)
-                    {
-                        _logger.LogWarning("Nhận message rỗng hoặc không thể parse JSON trên queue {QueueName}. Chuyển vào DLQ.", _queueName);
-                        _channel.BasicNack(deliveryTag: ea.DeliveryTag, multiple: false, requeue: false);
-                        return;
-                    }
-
-                    var eventId = @event.Id.ToString();
-
-                    // Hook Idempotency Check: Ngăn chặn xử lý trùng lặp sự kiện
-                    if (await IsEventProcessedAsync(eventId, stoppingToken))
-                    {
-                        _logger.LogWarning("Sự kiện {EventType} (ID: {EventId}) đã được xử lý trước đó. Bỏ qua và ACK.", @event.EventType, eventId);
-                        _channel.BasicAck(deliveryTag: ea.DeliveryTag, multiple: false);
-                        return;
-                    }
-
-                    // Thực thi nghiệp vụ domain
-                    await ProcessEventAsync(@event, stoppingToken);
-
-                    // Hook Idempotency Mark: Lưu vết đã xử lý thành công
-                    await MarkEventProcessedAsync(eventId, stoppingToken);
-
-                    // Xác nhận xử lý thành công (ACK)
-                    _channel.BasicAck(deliveryTag: ea.DeliveryTag, multiple: false);
+                    await Task.Delay(5000, stoppingToken);
                 }
-                catch (Exception ex)
+                catch (OperationCanceledException)
                 {
-                    _logger.LogError(ex, "Lỗi khi xử lý sự kiện từ queue {QueueName}.", _queueName);
-
-                    // D15: Retry tối đa 3 lần qua retry queue có TTL, sau đó đẩy sang DLQ
-                    var currentRetries = RabbitMqRetryHelper.GetRetryCount(ea.BasicProperties?.Headers);
-                    if (RabbitMqRetryHelper.ShouldRetry(currentRetries, out var nextRetries))
-                    {
-                        _logger.LogWarning("Thử lại xử lý sự kiện (Lần {NextRetries}/{MaxRetries}) qua retry queue cho queue {QueueName}.",
-                            nextRetries, RabbitMqRetryHelper.MaxRetryAttempts, _queueName);
-
-                        var retryProps = _channel.CreateBasicProperties();
-                        retryProps.Persistent = true;
-                        retryProps.Headers = new Dictionary<string, object>
-                        {
-                            { RabbitMqRetryHelper.RetryCountHeader, nextRetries }
-                        };
-
-                        _channel.BasicPublish(
-                            exchange: "",
-                            routingKey: $"{_queueName}.retry",
-                            basicProperties: retryProps,
-                            body: ea.Body
-                        );
-
-                        _channel.BasicAck(deliveryTag: ea.DeliveryTag, multiple: false);
-                    }
-                    else
-                    {
-                        _logger.LogWarning("Đã thử lại {MaxRetries} lần thất bại trên queue {QueueName}. Đẩy message vào DLQ ({DlxExchange}).",
-                            RabbitMqRetryHelper.MaxRetryAttempts, _queueName, _dlxExchangeName);
-
-                        _channel.BasicNack(deliveryTag: ea.DeliveryTag, multiple: false, requeue: false);
-                    }
+                    break;
                 }
-            };
-
-            _channel.BasicConsume(queue: _queueName, autoAck: false, consumer: consumer);
-            _logger.LogInformation("Khởi động consumer thành công cho queue '{QueueName}' (RoutingKey: '{RoutingKey}') kèm DLQ '{Dlq}'.",
-                _queueName, _routingKey, _dlqQueueName);
+            }
         }
-        catch (Exception ex)
-        {
-            _logger.LogWarning(ex, "Không thể kết nối RabbitMQ để lắng nghe queue {QueueName}. Consumer sẽ tự động thử lại khi có broker.", _queueName);
-        }
-
-        return Task.CompletedTask;
     }
 
     /// <summary>

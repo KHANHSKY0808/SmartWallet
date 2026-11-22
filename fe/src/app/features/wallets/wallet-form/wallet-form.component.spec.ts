@@ -92,5 +92,13 @@ describe('WalletFormComponent', () => {
     expect(errorEl).toBeTruthy();
     expect(errorEl?.textContent).toContain('Tên ví đã tồn tại');
   });
+
+  it('D29: should only offer VND as currency option in Sprint 2 MVP', () => {
+    const compiled = fixture.nativeElement as HTMLElement;
+    const select = compiled.querySelector('#currency') as HTMLSelectElement;
+    expect(select).toBeTruthy();
+    expect(select.options.length).toBe(1);
+    expect(select.options[0].value).toBe('VND');
+  });
 });
 

@@ -36,6 +36,16 @@ public class RabbitMqTopologyTests
     }
 
     [Fact]
+    public void X09_GetRetryQueueArguments_DeadLettersOnlyToOwnQueue()
+    {
+        var retryArgs = RabbitMqTopology.GetRetryQueueArguments("profile.user-registered");
+
+        Assert.Equal(5000, retryArgs["x-message-ttl"]);
+        Assert.Equal("", retryArgs["x-dead-letter-exchange"]);
+        Assert.Equal("profile.user-registered", retryArgs["x-dead-letter-routing-key"]);
+    }
+
+    [Fact]
     public void H10_Consumer_RetryExceededMaxAttempts_GoesToDlq()
     {
         // Lần 1: retry = 0 -> next = 1 (tiếp tục retry)

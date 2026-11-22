@@ -13,8 +13,12 @@ public static class JwtAuthExtensions
         IConfiguration configuration)
     {
         // Ưu tiên đọc từ Configuration (appsettings / user-secrets), sau đó fallback sang biến môi trường
-        var jwtKey = configuration["Jwt:SigningKey"]
-            ?? Environment.GetEnvironmentVariable("JWT_SIGNING_KEY");
+        var jwtKey = configuration["Jwt:SigningKey"];
+        if (string.IsNullOrWhiteSpace(jwtKey))
+        {
+            jwtKey = configuration["JWT_SIGNING_KEY"]
+                ?? Environment.GetEnvironmentVariable("JWT_SIGNING_KEY");
+        }
 
         // Fail-fast: Báo lỗi nghiêm ngặt ngay khi khởi động nếu thiếu signing key
         if (string.IsNullOrWhiteSpace(jwtKey))

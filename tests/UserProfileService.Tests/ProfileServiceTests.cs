@@ -94,6 +94,22 @@ public class ProfileServiceTests : IDisposable
     }
 
     [Fact]
+    public async Task P03_UpdateProfileAsync_WhenCurrencyIsUnknown_ShouldThrowArgumentException()
+    {
+        // Arrange
+        var userId = Guid.NewGuid();
+        var updateRequest = new UpdateProfileRequest
+        {
+            FullName = "QA Tester",
+            DefaultCurrency = "XYZ"
+        };
+
+        // Act & Assert
+        var ex = await Assert.ThrowsAsync<ArgumentException>(() => _service.UpdateProfileAsync(userId, updateRequest));
+        Assert.Contains("XYZ", ex.Message);
+    }
+
+    [Fact]
     public async Task CreateOrUpdateDefaultProfileAsync_WhenMissing_ShouldCreateProfile()
     {
         // Arrange

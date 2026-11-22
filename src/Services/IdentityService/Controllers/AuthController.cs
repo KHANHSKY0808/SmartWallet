@@ -15,6 +15,8 @@ namespace IdentityService.Controllers;
 [Route("api/auth")]
 public class AuthController : ControllerBase
 {
+    private static readonly string DummyPasswordHash = "$2a$11$N9qo8uLOickgx2ZMRZoMyeIjZAgcfl7p92ldGxad68LJZdL17lhWy";
+
     private readonly IdentityDbContext _context;
     private readonly IPasswordHasher _passwordHasher;
     private readonly ITokenService _tokenService;
@@ -172,8 +174,10 @@ public class AuthController : ControllerBase
             .FirstOrDefaultAsync(u => u.Email.ToLower() == normalizedEmail);
 
         var now = _timeProvider.GetUtcNow().UtcDateTime;
-        // H3/D10: Xác thực mật khẩu để chống User Enumeration
-        var isValidPassword = user != null && _passwordHasher.VerifyPassword(request.Password, user.PasswordHash);
+        // H3/D10: Xác thực mật khẩu để chống User Enumeration & Timing Attack (N9 / S08)
+        var passwordHashToVerify = user?.PasswordHash ?? DummyPasswordHash;
+        var isPasswordValid = _passwordHasher.VerifyPassword(request.Password, passwordHashToVerify);
+        var isValidPassword = user != null && isPasswordValid;
 
         if (!isValidPassword)
         {

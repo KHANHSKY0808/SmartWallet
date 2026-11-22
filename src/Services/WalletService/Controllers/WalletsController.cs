@@ -107,9 +107,10 @@ public class WalletsController : ControllerBase
         }
 
         var currency = string.IsNullOrWhiteSpace(request.Currency) ? "VND" : request.Currency.Trim().ToUpperInvariant();
-        if (!AllowedCurrencies.Contains(currency))
+        // D29: Sprint 2 MVP Wallet chỉ hỗ trợ VND. POST/PUT tiền tệ khác trả 400 UNSUPPORTED_CURRENCY
+        if (currency != "VND")
         {
-            return BadRequest(new { message = $"Đơn vị tiền tệ '{currency}' không được hỗ trợ" });
+            return BadRequest(new { code = "UNSUPPORTED_CURRENCY", message = $"Sprint 2 MVP hiện chỉ hỗ trợ tiền tệ 'VND', không hỗ trợ '{currency}'." });
         }
 
         // D19: Unique tên trong các ví chưa archive của user, Trim và không phân biệt hoa thường
@@ -186,13 +187,13 @@ public class WalletsController : ControllerBase
             return StatusCode(409, new { code = "DUPLICATE_WALLET_NAME", message = "Tên ví đã tồn tại trong các ví đang hoạt động" });
         }
 
-        // Đổi tiền tệ: W-13 không cho đổi nếu Balance khác InitialBalance
+        // Đổi tiền tệ: D29 Sprint 2 MVP chỉ hỗ trợ VND, W-13 không cho đổi nếu Balance khác InitialBalance
         if (!string.IsNullOrWhiteSpace(request.Currency))
         {
             var newCurrency = request.Currency.Trim().ToUpperInvariant();
-            if (!AllowedCurrencies.Contains(newCurrency))
+            if (newCurrency != "VND")
             {
-                return BadRequest(new { message = $"Đơn vị tiền tệ '{newCurrency}' không được hỗ trợ" });
+                return BadRequest(new { code = "UNSUPPORTED_CURRENCY", message = $"Sprint 2 MVP hiện chỉ hỗ trợ tiền tệ 'VND', không hỗ trợ '{newCurrency}'." });
             }
 
             if (!string.Equals(wallet.Currency, newCurrency, StringComparison.OrdinalIgnoreCase))
@@ -473,6 +474,28 @@ public class WalletsController : ControllerBase
         {
             // D22 / T-19: Xung đột RowVersion trả 409 CONCURRENCY_CONFLICT
             return StatusCode(409, new { code = "CONCURRENCY_CONFLICT", message = "Xung đột đồng thời khi cập nhật số dư ví, vui lòng thử lại." });
+        }
+        catch (DbUpdateException)
+        {
+            // N4 / T-03b: Xung đột đồng thời do trùng IdempotencyKey (Double submit)
+            _context.ChangeTracker.Clear();
+            for (var retry = 0; retry < 5; retry++)
+            {
+                var keyRecord = await _context.IdempotencyKeys.AsNoTracking()
+                    .FirstOrDefaultAsync(k => k.UserId == userId && k.IdempotencyKey == keyStr);
+                if (keyRecord != null)
+                {
+                    if (string.Equals(keyRecord.RequestHash, requestHash, StringComparison.OrdinalIgnoreCase))
+                    {
+                        var cachedResponse = JsonSerializer.Deserialize<TransferResponse>(keyRecord.ResponseBody);
+                        return keyRecord.StatusCode == 200 ? Ok(cachedResponse) : StatusCode(keyRecord.StatusCode, cachedResponse);
+                    }
+                    return StatusCode(422, new { code = "IDEMPOTENCY_KEY_REUSED", message = "Idempotency key đã được sử dụng với nội dung yêu cầu khác." });
+                }
+                await Task.Delay(50);
+            }
+
+            return StatusCode(409, new { code = "CONCURRENCY_CONFLICT", message = "Xung đột đồng thời khi xử lý giao dịch, vui lòng thử lại." });
         }
 
         // SAGA BƯỚC 4: Publish sự kiện MoneyTransferred lên RabbitMQ
