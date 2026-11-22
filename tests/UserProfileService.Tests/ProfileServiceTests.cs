@@ -121,6 +121,98 @@ public class ProfileServiceTests : IDisposable
         Assert.Contains(currencies, c => c.Code == "USD");
     }
 
+    [Fact]
+    public async Task H06_UploadAvatar_FilenameIsGuid_DoesNotContainUserId()
+    {
+        // Arrange
+        var userId = Guid.NewGuid();
+        var tempDir = Path.Combine(Path.GetTempPath(), "qlct_test_avatars_" + Guid.NewGuid());
+        Directory.CreateDirectory(tempDir);
+
+        try
+        {
+            var pngBytes = new byte[] { 0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A, 0x00, 0x00, 0x00, 0x00 };
+            using var ms = new MemoryStream(pngBytes);
+            var formFile = new Microsoft.AspNetCore.Http.FormFile(ms, 0, ms.Length, "file", "avatar.png");
+
+            // Act
+            var avatarUrl = await _service.UploadAvatarAsync(userId, formFile, tempDir);
+
+            // Assert
+            Assert.NotNull(avatarUrl);
+            var fileName = Path.GetFileName(avatarUrl);
+            Assert.DoesNotContain(userId.ToString(), fileName);
+            Assert.Matches(@"^[0-9a-f]{32}\.(png|jpg|jpeg|webp)$", fileName);
+        }
+        finally
+        {
+            if (Directory.Exists(tempDir)) Directory.Delete(tempDir, true);
+        }
+    }
+
+    [Fact]
+    public async Task H07_UploadAvatar_Exceeds2MB_ThrowsArgumentException()
+    {
+        // Arrange
+        var userId = Guid.NewGuid();
+        var tempDir = Path.Combine(Path.GetTempPath(), "qlct_test_avatars_" + Guid.NewGuid());
+
+        var oversizedBytes = new byte[2 * 1024 * 1024 + 1];
+        oversizedBytes[0] = 0x89; oversizedBytes[1] = 0x50; oversizedBytes[2] = 0x4E; oversizedBytes[3] = 0x47;
+        using var ms = new MemoryStream(oversizedBytes);
+        var formFile = new Microsoft.AspNetCore.Http.FormFile(ms, 0, ms.Length, "file", "big.png");
+
+        // Act & Assert
+        var ex = await Assert.ThrowsAsync<ArgumentException>(() => _service.UploadAvatarAsync(userId, formFile, tempDir));
+        Assert.Contains("2MB", ex.Message);
+    }
+
+    [Fact]
+    public async Task H08_UploadAvatar_WebpValid_Succeeds()
+    {
+        // Arrange
+        var userId = Guid.NewGuid();
+        var tempDir = Path.Combine(Path.GetTempPath(), "qlct_test_avatars_" + Guid.NewGuid());
+        Directory.CreateDirectory(tempDir);
+
+        try
+        {
+            // RIFF....WEBP
+            var webpBytes = new byte[] {
+                0x52, 0x49, 0x46, 0x46, 0x24, 0x00, 0x00, 0x00, 0x57, 0x45, 0x42, 0x50
+            };
+            using var ms = new MemoryStream(webpBytes);
+            var formFile = new Microsoft.AspNetCore.Http.FormFile(ms, 0, ms.Length, "file", "photo.webp");
+
+            // Act
+            var avatarUrl = await _service.UploadAvatarAsync(userId, formFile, tempDir);
+
+            // Assert
+            Assert.NotNull(avatarUrl);
+            Assert.EndsWith(".webp", avatarUrl);
+        }
+        finally
+        {
+            if (Directory.Exists(tempDir)) Directory.Delete(tempDir, true);
+        }
+    }
+
+    [Fact]
+    public async Task H09_UploadAvatar_InvalidMagicBytes_ThrowsArgumentException()
+    {
+        // Arrange
+        var userId = Guid.NewGuid();
+        var tempDir = Path.Combine(Path.GetTempPath(), "qlct_test_avatars_" + Guid.NewGuid());
+
+        var fakeBytes = System.Text.Encoding.UTF8.GetBytes("<html><script>alert(1)</script></html>");
+        using var ms = new MemoryStream(fakeBytes);
+        var formFile = new Microsoft.AspNetCore.Http.FormFile(ms, 0, ms.Length, "file", "evil.png");
+
+        // Act & Assert
+        var ex = await Assert.ThrowsAsync<ArgumentException>(() => _service.UploadAvatarAsync(userId, formFile, tempDir));
+        Assert.Contains("không hợp lệ", ex.Message);
+    }
+
     public void Dispose()
     {
         _context.Dispose();

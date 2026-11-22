@@ -64,8 +64,15 @@ public class ProfileController : ControllerBase
             return Unauthorized(new { message = "Không thể xác thực danh tính người dùng" });
         }
 
-        var updated = await _profileService.UpdateProfileAsync(userId, request);
-        return Ok(updated);
+        try
+        {
+            var updated = await _profileService.UpdateProfileAsync(userId, request);
+            return Ok(updated);
+        }
+        catch (ArgumentException ex)
+        {
+            return BadRequest(new { message = ex.Message });
+        }
     }
 
     [HttpPost("avatar")]

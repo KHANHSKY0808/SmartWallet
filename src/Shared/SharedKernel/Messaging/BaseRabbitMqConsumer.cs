@@ -65,29 +65,8 @@ public abstract class BaseRabbitMqConsumer<TEvent> : BackgroundService where TEv
             _connection = _connectionFactory.CreateConnection();
             _channel = _connection.CreateModel();
 
-            // 1. Khởi tạo Dead Letter Exchange (DLX) và Dead Letter Queue (DLQ)
-            _channel.ExchangeDeclare(exchange: _dlxExchangeName, type: ExchangeType.Topic, durable: true);
-            _channel.QueueDeclare(queue: _dlqQueueName, durable: true, exclusive: false, autoDelete: false);
-            _channel.QueueBind(queue: _dlqQueueName, exchange: _dlxExchangeName, routingKey: _routingKey);
-
-            // 2. Khởi tạo Exchange chính và Queue chính với cấu hình gắn DLX
-            _channel.ExchangeDeclare(exchange: _exchangeName, type: ExchangeType.Topic, durable: true);
-
-            var queueArgs = new Dictionary<string, object>
-            {
-                { "x-dead-letter-exchange", _dlxExchangeName },
-                { "x-dead-letter-routing-key", _routingKey }
-            };
-
-            _channel.QueueDeclare(
-                queue: _queueName,
-                durable: true,
-                exclusive: false,
-                autoDelete: false,
-                arguments: queueArgs
-            );
-
-            _channel.QueueBind(queue: _queueName, exchange: _exchangeName, routingKey: _routingKey);
+            // Khởi tạo topology RabbitMQ chuẩn (DLX, DLQ, Retry queue TTL, Main queue) thông qua helper dùng chung
+            RabbitMqTopology.DeclareConsumerQueue(_channel, _queueName, _routingKey, _exchangeName);
 
             // Giới hạn prefetch để xử lý công bằng giữa các consumer instances
             _channel.BasicQos(prefetchSize: 0, prefetchCount: 10, global: false);
@@ -129,9 +108,38 @@ public abstract class BaseRabbitMqConsumer<TEvent> : BackgroundService where TEv
                 }
                 catch (Exception ex)
                 {
-                    _logger.LogError(ex, "Lỗi khi xử lý sự kiện từ queue {QueueName}. Tự động đẩy vào DLQ ({DlxExchange}).", _queueName, _dlxExchangeName);
-                    // NACK với requeue = false để RabbitMQ tự động đẩy message sang DLX/DLQ
-                    _channel.BasicNack(deliveryTag: ea.DeliveryTag, multiple: false, requeue: false);
+                    _logger.LogError(ex, "Lỗi khi xử lý sự kiện từ queue {QueueName}.", _queueName);
+
+                    // D15: Retry tối đa 3 lần qua retry queue có TTL, sau đó đẩy sang DLQ
+                    var currentRetries = RabbitMqRetryHelper.GetRetryCount(ea.BasicProperties?.Headers);
+                    if (RabbitMqRetryHelper.ShouldRetry(currentRetries, out var nextRetries))
+                    {
+                        _logger.LogWarning("Thử lại xử lý sự kiện (Lần {NextRetries}/{MaxRetries}) qua retry queue cho queue {QueueName}.",
+                            nextRetries, RabbitMqRetryHelper.MaxRetryAttempts, _queueName);
+
+                        var retryProps = _channel.CreateBasicProperties();
+                        retryProps.Persistent = true;
+                        retryProps.Headers = new Dictionary<string, object>
+                        {
+                            { RabbitMqRetryHelper.RetryCountHeader, nextRetries }
+                        };
+
+                        _channel.BasicPublish(
+                            exchange: "",
+                            routingKey: $"{_queueName}.retry",
+                            basicProperties: retryProps,
+                            body: ea.Body
+                        );
+
+                        _channel.BasicAck(deliveryTag: ea.DeliveryTag, multiple: false);
+                    }
+                    else
+                    {
+                        _logger.LogWarning("Đã thử lại {MaxRetries} lần thất bại trên queue {QueueName}. Đẩy message vào DLQ ({DlxExchange}).",
+                            RabbitMqRetryHelper.MaxRetryAttempts, _queueName, _dlxExchangeName);
+
+                        _channel.BasicNack(deliveryTag: ea.DeliveryTag, multiple: false, requeue: false);
+                    }
                 }
             };
 

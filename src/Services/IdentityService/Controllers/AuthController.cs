@@ -22,6 +22,7 @@ public class AuthController : ControllerBase
     private readonly IEventPublisher? _eventPublisher;
     private readonly ILogger<AuthController> _logger;
     private readonly string _frontendBaseUrl;
+    private readonly TimeProvider _timeProvider;
 
     public AuthController(
         IdentityDbContext context,
@@ -30,7 +31,8 @@ public class AuthController : ControllerBase
         IEmailSender emailSender,
         ILogger<AuthController> logger,
         IEventPublisher? eventPublisher = null,
-        IConfiguration? configuration = null)
+        IConfiguration? configuration = null,
+        TimeProvider? timeProvider = null)
     {
         _context = context;
         _passwordHasher = passwordHasher;
@@ -39,6 +41,7 @@ public class AuthController : ControllerBase
         _logger = logger;
         _eventPublisher = eventPublisher;
         _frontendBaseUrl = (configuration?["App:FrontendBaseUrl"] ?? "http://localhost:4200").TrimEnd('/');
+        _timeProvider = timeProvider ?? TimeProvider.System;
     }
 
     [HttpPost("register")]
@@ -168,62 +171,46 @@ public class AuthController : ControllerBase
             .ThenInclude(ur => ur.Role)
             .FirstOrDefaultAsync(u => u.Email.ToLower() == normalizedEmail);
 
-        // H3: Xác thực mật khẩu TRƯỚC để chống User Enumeration
+        var now = _timeProvider.GetUtcNow().UtcDateTime;
+        // H3/D10: Xác thực mật khẩu để chống User Enumeration
         var isValidPassword = user != null && _passwordHasher.VerifyPassword(request.Password, user.PasswordHash);
 
         if (!isValidPassword)
         {
             if (user != null)
             {
-                // Nếu tài khoản đang trong thời gian bị khóa do brute-force trước đó
-                if (user.LockoutEnd.HasValue && user.LockoutEnd.Value > DateTime.UtcNow)
+                // Nếu tài khoản đang trong thời gian bị khóa, không tăng FailedLoginAttempts, không đẩy lùi LockoutEnd (H-05)
+                var isCurrentlyLocked = user.LockoutEnd.HasValue && user.LockoutEnd.Value > now;
+                if (!isCurrentlyLocked)
                 {
-                    var remainingMinutes = Math.Ceiling((user.LockoutEnd.Value - DateTime.UtcNow).TotalMinutes);
-                    return StatusCode(423, new
+                    // Nếu thời gian khóa cũ đã hết, reset
+                    if (user.LockoutEnd.HasValue && user.LockoutEnd.Value <= now)
                     {
-                        message = $"Tài khoản bị khóa 15 phút do nhập sai mật khẩu nhiều lần. Vui lòng thử lại sau {remainingMinutes} phút.",
-                        lockoutEnd = user.LockoutEnd
-                    });
-                }
+                        user.LockoutEnd = null;
+                        user.FailedLoginAttempts = 0;
+                    }
 
-                // Nếu thời gian khóa cũ đã hết, reset
-                if (user.LockoutEnd.HasValue && user.LockoutEnd.Value <= DateTime.UtcNow)
-                {
-                    user.LockoutEnd = null;
-                    user.FailedLoginAttempts = 0;
-                }
+                    user.FailedLoginAttempts++;
+                    if (user.FailedLoginAttempts >= 5)
+                    {
+                        user.LockoutEnd = now.AddMinutes(15);
+                        user.FailedLoginAttempts = 0;
+                    }
 
-                user.FailedLoginAttempts++;
-                if (user.FailedLoginAttempts >= 5)
-                {
-                    user.LockoutEnd = DateTime.UtcNow.AddMinutes(15);
-                    user.FailedLoginAttempts = 0;
                     await _context.SaveChangesAsync();
-
-                    return StatusCode(423, new
-                    {
-                        message = "Tài khoản bị khóa 15 phút do nhập sai mật khẩu 5 lần liên tiếp.",
-                        lockoutEnd = user.LockoutEnd
-                    });
                 }
-
-                await _context.SaveChangesAsync();
-                return Unauthorized(new
-                {
-                    message = "Email hoặc mật khẩu không chính xác",
-                    remainingAttempts = 5 - user.FailedLoginAttempts
-                });
             }
 
+            // D10 / K1: Luôn trả 401 cùng body từng byte, không trả remainingAttempts, không tiết lộ user có tồn tại hay không
             return Unauthorized(new { message = "Email hoặc mật khẩu không chính xác" });
         }
 
         // Mật khẩu đúng -> Kiểm tra các trạng thái tài khoản
         if (user!.LockoutEnd.HasValue)
         {
-            if (user.LockoutEnd.Value > DateTime.UtcNow)
+            if (user.LockoutEnd.Value > now)
             {
-                var remainingMinutes = Math.Ceiling((user.LockoutEnd.Value - DateTime.UtcNow).TotalMinutes);
+                var remainingMinutes = Math.Ceiling((user.LockoutEnd.Value - now).TotalMinutes);
                 return StatusCode(423, new
                 {
                     message = $"Tài khoản bị khóa 15 phút do nhập sai mật khẩu nhiều lần. Vui lòng thử lại sau {remainingMinutes} phút.",
@@ -232,6 +219,7 @@ public class AuthController : ControllerBase
             }
             else
             {
+                // Khóa đã hết hạn -> mở khóa
                 user.LockoutEnd = null;
                 user.FailedLoginAttempts = 0;
             }
@@ -250,6 +238,7 @@ public class AuthController : ControllerBase
         // Đăng nhập thành công -> Reset số lần đăng nhập sai
         user.FailedLoginAttempts = 0;
         user.LockoutEnd = null;
+        await _context.SaveChangesAsync();
 
         var roles = user.UserRoles.Select(ur => ur.Role.Name).ToList();
         if (roles.Count == 0)

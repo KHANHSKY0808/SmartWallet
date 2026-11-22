@@ -64,6 +64,8 @@ public record MoneyTransferredEvent : IntegrationEvent
     public Guid UserId { get; init; }
     public Guid SourceWalletId { get; init; }
     public Guid TargetWalletId { get; init; }
+    public Guid FromWalletId { get; init; }
+    public Guid ToWalletId { get; init; }
     public decimal Amount { get; init; }
     public decimal Fee { get; init; }
     public string? Note { get; init; }

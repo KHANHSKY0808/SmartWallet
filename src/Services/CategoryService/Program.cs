@@ -1,4 +1,6 @@
-﻿using SharedKernel.Extensions;
+using Microsoft.EntityFrameworkCore;
+using SharedKernel.Extensions;
+using CategoryService.Data;
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -9,6 +11,14 @@ builder.Services.AddEndpointsApiExplorer();
 // Cấu hình Swagger
 builder.Services.AddSwaggerGen();
 
+// Cấu hình Database SQLite
+var connectionString = builder.Configuration.GetConnectionString("DefaultConnection") 
+    ?? "Data Source=../../../database/category.db;Cache=Shared";
+builder.Services.AddDbContext<CategoryDbContext>(options =>
+{
+    options.UseSqlite(connectionString);
+});
+
 // Cấu hình JWT Bearer chung từ SharedKernel
 builder.Services.AddJwtAuthentication(builder.Configuration);
 
@@ -16,6 +26,19 @@ builder.Services.AddJwtAuthentication(builder.Configuration);
 builder.Services.AddConsulConfig(builder.Configuration);
 
 var app = builder.Build();
+
+// Khởi tạo Database và Seed 20 danh mục mặc định
+using (var scope = app.Services.CreateScope())
+{
+    var context = scope.ServiceProvider.GetRequiredService<CategoryDbContext>();
+    var conn = context.Database.GetDbConnection();
+    if (!string.IsNullOrEmpty(conn.DataSource) && Path.GetDirectoryName(conn.DataSource) is { Length: > 0 } dir)
+    {
+        Directory.CreateDirectory(dir);
+    }
+    context.Database.EnsureCreated();
+    await DefaultCategorySeeder.SeedAsync(context, app.Logger);
+}
 
 if (app.Environment.IsDevelopment())
 {
@@ -41,3 +64,5 @@ app.UseConsulServiceRegistration(builder.Configuration, app.Lifetime);
 app.MapControllers();
 
 app.Run();
+
+public partial class Program { }

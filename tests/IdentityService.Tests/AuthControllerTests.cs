@@ -216,15 +216,205 @@ public class AuthControllerTests : IDisposable
             Assert.IsType<UnauthorizedObjectResult>(res);
         }
 
-        // 5th failed attempt should trigger Lockout (423)
+        // 5th failed attempt: D10 specifies returning 401 Unauthorized (not 423), but account is locked in DB
         var fifthResult = await _controller.Login(badRequest);
-        var objectResult = Assert.IsType<ObjectResult>(fifthResult);
-        Assert.Equal(423, objectResult.StatusCode);
+        var unauthResult = Assert.IsType<UnauthorizedObjectResult>(fifthResult);
+        Assert.Equal(401, unauthResult.StatusCode);
 
         var lockedUser = await _context.Users.FindAsync(user.Id);
         Assert.NotNull(lockedUser);
         Assert.NotNull(lockedUser.LockoutEnd);
         Assert.True(lockedUser.LockoutEnd > DateTime.UtcNow);
+    }
+
+    [Fact]
+    public async Task H01_Login_NonExistentAndExistentUsers_WrongPassword_ReturnIdentical401ByteForByte()
+    {
+        // Arrange
+        var user = new User
+        {
+            Id = Guid.NewGuid(),
+            Email = "y@a.com",
+            PasswordHash = _passwordHasher.HashPassword("RealPassword123!"),
+            Status = UserStatus.Active
+        };
+        _context.Users.Add(user);
+        await _context.SaveChangesAsync();
+
+        var nonExistentReq = new LoginRequest { Email = "x@a.com", Password = "AnyPassword123!" };
+        var existentReq = new LoginRequest { Email = "y@a.com", Password = "WrongPassword123!" };
+
+        // Act
+        var res1 = await _controller.Login(nonExistentReq) as UnauthorizedObjectResult;
+        var res2 = await _controller.Login(existentReq) as UnauthorizedObjectResult;
+
+        // Assert
+        Assert.NotNull(res1);
+        Assert.NotNull(res2);
+        Assert.Equal(401, res1.StatusCode);
+        Assert.Equal(401, res2.StatusCode);
+
+        var json1 = System.Text.Json.JsonSerializer.Serialize(res1.Value);
+        var json2 = System.Text.Json.JsonSerializer.Serialize(res2.Value);
+        Assert.Equal(json1, json2);
+        Assert.DoesNotContain("remainingAttempts", json1);
+    }
+
+    [Fact]
+    public async Task H02_Login_SixthFailedAttempt_Returns401WithSameBody()
+    {
+        // Arrange
+        var user = new User
+        {
+            Id = Guid.NewGuid(),
+            Email = "lockout_h02@example.com",
+            PasswordHash = _passwordHasher.HashPassword("CorrectPass123!"),
+            Status = UserStatus.Active
+        };
+        _context.Users.Add(user);
+        await _context.SaveChangesAsync();
+
+        var badRequest = new LoginRequest { Email = "lockout_h02@example.com", Password = "WrongPassword" };
+        var nonExistentReq = new LoginRequest { Email = "random@example.com", Password = "WrongPassword" };
+
+        var baselineRes = await _controller.Login(nonExistentReq) as UnauthorizedObjectResult;
+        var baselineJson = System.Text.Json.JsonSerializer.Serialize(baselineRes!.Value);
+
+        // 5 failed attempts
+        for (int i = 0; i < 5; i++)
+        {
+            await _controller.Login(badRequest);
+        }
+
+        // 6th failed attempt
+        var sixthRes = await _controller.Login(badRequest) as UnauthorizedObjectResult;
+        Assert.NotNull(sixthRes);
+        Assert.Equal(401, sixthRes.StatusCode);
+        var sixthJson = System.Text.Json.JsonSerializer.Serialize(sixthRes.Value);
+        Assert.Equal(baselineJson, sixthJson);
+    }
+
+    [Fact]
+    public async Task H03_Login_SixthAttemptCorrectPasswordWhileLocked_Returns423()
+    {
+        // Arrange
+        var user = new User
+        {
+            Id = Guid.NewGuid(),
+            Email = "lockout_h03@example.com",
+            PasswordHash = _passwordHasher.HashPassword("CorrectPass123!"),
+            Status = UserStatus.Active
+        };
+        _context.Users.Add(user);
+        await _context.SaveChangesAsync();
+
+        var badRequest = new LoginRequest { Email = "lockout_h03@example.com", Password = "WrongPassword" };
+        for (int i = 0; i < 5; i++)
+        {
+            await _controller.Login(badRequest);
+        }
+
+        // 6th attempt with correct password within 15 minutes
+        var correctRequest = new LoginRequest { Email = "lockout_h03@example.com", Password = "CorrectPass123!" };
+        var res = await _controller.Login(correctRequest) as ObjectResult;
+
+        Assert.NotNull(res);
+        Assert.Equal(423, res.StatusCode);
+    }
+
+    [Fact]
+    public async Task H04_Login_CorrectPasswordAfter15Minutes_Returns200AndResetsCounter()
+    {
+        // Arrange with TestTimeProvider
+        var timeProvider = new TestTimeProvider(DateTimeOffset.UtcNow);
+        var controllerWithClock = new AuthController(
+            _context,
+            _passwordHasher,
+            _tokenService,
+            _emailSender,
+            NullLogger<AuthController>.Instance,
+            timeProvider: timeProvider
+        );
+
+        var user = new User
+        {
+            Id = Guid.NewGuid(),
+            Email = "lockout_h04@example.com",
+            PasswordHash = _passwordHasher.HashPassword("CorrectPass123!"),
+            Status = UserStatus.Active
+        };
+        user.UserRoles.Add(new UserRole { UserId = user.Id, RoleId = 2 });
+        _context.Users.Add(user);
+        await _context.SaveChangesAsync();
+
+        var badRequest = new LoginRequest { Email = "lockout_h04@example.com", Password = "WrongPassword" };
+        for (int i = 0; i < 5; i++)
+        {
+            await controllerWithClock.Login(badRequest);
+        }
+
+        // Advance clock by 16 minutes
+        timeProvider.Advance(TimeSpan.FromMinutes(16));
+
+        var correctRequest = new LoginRequest { Email = "lockout_h04@example.com", Password = "CorrectPass123!" };
+        var res = await controllerWithClock.Login(correctRequest) as OkObjectResult;
+
+        Assert.NotNull(res);
+        Assert.Equal(200, res.StatusCode);
+
+        var refreshedUser = await _context.Users.FindAsync(user.Id);
+        Assert.NotNull(refreshedUser);
+        Assert.Equal(0, refreshedUser.FailedLoginAttempts);
+        Assert.Null(refreshedUser.LockoutEnd);
+    }
+
+    [Fact]
+    public async Task H05_Login_RepeatedFailedAttemptsWhileLocked_DoesNotIncreaseCounterOrExtendLockout()
+    {
+        // Arrange
+        var timeProvider = new TestTimeProvider(DateTimeOffset.UtcNow);
+        var controllerWithClock = new AuthController(
+            _context,
+            _passwordHasher,
+            _tokenService,
+            _emailSender,
+            NullLogger<AuthController>.Instance,
+            timeProvider: timeProvider
+        );
+
+        var user = new User
+        {
+            Id = Guid.NewGuid(),
+            Email = "lockout_h05@example.com",
+            PasswordHash = _passwordHasher.HashPassword("CorrectPass123!"),
+            Status = UserStatus.Active
+        };
+        _context.Users.Add(user);
+        await _context.SaveChangesAsync();
+
+        var badRequest = new LoginRequest { Email = "lockout_h05@example.com", Password = "WrongPassword" };
+        for (int i = 0; i < 5; i++)
+        {
+            await controllerWithClock.Login(badRequest);
+        }
+
+        var lockedUser = await _context.Users.FindAsync(user.Id);
+        var initialLockoutEnd = lockedUser!.LockoutEnd;
+
+        // Advance 5 minutes, still locked
+        timeProvider.Advance(TimeSpan.FromMinutes(5));
+
+        // Submit 3 more failed attempts while locked
+        for (int i = 0; i < 3; i++)
+        {
+            var res = await controllerWithClock.Login(badRequest);
+            Assert.IsType<UnauthorizedObjectResult>(res);
+        }
+
+        var recheckUser = await _context.Users.FindAsync(user.Id);
+        Assert.NotNull(recheckUser);
+        Assert.Equal(0, recheckUser.FailedLoginAttempts);
+        Assert.Equal(initialLockoutEnd, recheckUser.LockoutEnd);
     }
 
     [Fact]
@@ -372,5 +562,13 @@ public class TestEmailSender : IEmailSender
         SentEmails.Add((to, subject, body));
         return Task.CompletedTask;
     }
+}
+
+public class TestTimeProvider : TimeProvider
+{
+    private DateTimeOffset _utcNow;
+    public TestTimeProvider(DateTimeOffset initialUtcNow) => _utcNow = initialUtcNow;
+    public override DateTimeOffset GetUtcNow() => _utcNow;
+    public void Advance(TimeSpan timeSpan) => _utcNow = _utcNow.Add(timeSpan);
 }
 

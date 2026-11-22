@@ -5,7 +5,7 @@ export const routes: Routes = [
   {
     path: '',
     pathMatch: 'full',
-    redirectTo: 'login'
+    redirectTo: 'wallets'
   },
   {
     path: 'login',
@@ -33,7 +33,27 @@ export const routes: Routes = [
     loadComponent: () => import('./features/profile/profile.component').then(m => m.ProfileComponent)
   },
   {
+    path: 'wallets',
+    canActivate: [authGuard],
+    loadComponent: () => import('./features/wallets/wallet-list/wallet-list.component').then(m => m.WalletListComponent)
+  },
+  {
+    path: 'wallets/create',
+    canActivate: [authGuard],
+    loadComponent: () => import('./features/wallets/wallet-form/wallet-form.component').then(m => m.WalletFormComponent)
+  },
+  {
+    path: 'wallets/transfer',
+    canActivate: [authGuard],
+    loadComponent: () => import('./features/wallets/transfer-form/transfer-form.component').then(m => m.TransferFormComponent)
+  },
+  {
+    path: 'categories',
+    canActivate: [authGuard],
+    loadComponent: () => import('./features/categories/category-tree/category-tree.component').then(m => m.CategoryTreeComponent)
+  },
+  {
     path: '**',
-    redirectTo: 'login'
+    redirectTo: 'wallets'
   }
 ];

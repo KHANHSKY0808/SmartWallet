@@ -97,21 +97,31 @@ public class ProfileService : IProfileService
             throw new ArgumentException("Tệp tải lên không được rỗng");
         }
 
-        if (file.Length > 5 * 1024 * 1024)
+        if (file.Length > 2 * 1024 * 1024)
         {
-            throw new ArgumentException("Kích thước tệp không được vượt quá 5MB");
+            throw new ArgumentException("Kích thước tệp không được vượt quá 2MB");
         }
 
-        var allowedExtensions = new[] { ".jpg", ".jpeg", ".png" };
+        var allowedExtensions = new[] { ".jpg", ".jpeg", ".png", ".webp" };
         var extension = Path.GetExtension(file.FileName).ToLowerInvariant();
         if (!allowedExtensions.Contains(extension))
         {
-            throw new ArgumentException("Chỉ chấp nhận các tệp ảnh định dạng .jpg, .jpeg, .png");
+            throw new ArgumentException("Chỉ chấp nhận các tệp ảnh định dạng .jpg, .jpeg, .png, .webp");
+        }
+
+        // Kiểm tra magic bytes thực tế của tệp (chống giả mạo đuôi tệp - H-09)
+        using (var stream = file.OpenReadStream())
+        {
+            if (!IsValidImageMagicBytes(stream, extension))
+            {
+                throw new ArgumentException("Nội dung tệp không hợp lệ hoặc không đúng định dạng ảnh");
+            }
         }
 
         Directory.CreateDirectory(uploadsPath);
 
-        var fileName = $"{userId}_{DateTime.UtcNow.Ticks}{extension}";
+        // D14/K6/H-06: Tên file là GUID ngẫu nhiên không chứa UserId, khớp regex ^[0-9a-f]{32}\.(png|jpg|jpeg|webp)$
+        var fileName = $"{Guid.NewGuid():N}{extension}";
         var filePath = Path.Combine(uploadsPath, fileName);
 
         using (var stream = new FileStream(filePath, FileMode.Create))
@@ -174,6 +184,29 @@ public class ProfileService : IProfileService
             await _context.SaveChangesAsync();
             _logger.LogInformation("Created default profile for UserId {UserId}", userId);
         }
+    }
+
+    private static bool IsValidImageMagicBytes(Stream stream, string extension)
+    {
+        if (stream.Length < 4) return false;
+        var header = new byte[12];
+        var read = stream.Read(header, 0, header.Length);
+        if (stream.CanSeek)
+        {
+            stream.Position = 0;
+        }
+
+        if (read < 4) return false;
+
+        return extension switch
+        {
+            ".jpg" or ".jpeg" => header[0] == 0xFF && header[1] == 0xD8 && header[2] == 0xFF,
+            ".png" => header[0] == 0x89 && header[1] == 0x50 && header[2] == 0x4E && header[3] == 0x47,
+            ".webp" => read >= 12 &&
+                       header[0] == 0x52 && header[1] == 0x49 && header[2] == 0x46 && header[3] == 0x46 && // RIFF
+                       header[8] == 0x57 && header[9] == 0x45 && header[10] == 0x42 && header[11] == 0x50, // WEBP
+            _ => false
+        };
     }
 }
 
