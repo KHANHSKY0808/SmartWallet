@@ -17,9 +17,9 @@ namespace TransactionService.Tests;
 
 public class FakeWalletClient : IWalletClient
 {
-    public Func<Guid, bool> Validator { get; set; } = _ => true;
+    public Func<Guid, WalletValidationResult> Validator { get; set; } = _ => new WalletValidationResult(true, false);
 
-    public Task<bool> ValidateWalletExistsAsync(Guid walletId, string? bearerToken = null, CancellationToken cancellationToken = default)
+    public Task<WalletValidationResult> ValidateWalletAsync(Guid walletId, string? bearerToken = null, CancellationToken cancellationToken = default)
     {
         return Task.FromResult(Validator(walletId));
     }
@@ -38,9 +38,14 @@ public class FakeCategoryClient : ICategoryClient
 public class FakeEventPublisher : IEventPublisher
 {
     public List<(IntegrationEvent Event, string RoutingKey)> PublishedEvents { get; } = new();
+    public bool ShouldThrow { get; set; }
 
     public Task PublishAsync<T>(T @event, string routingKey, CancellationToken cancellationToken = default) where T : IntegrationEvent
     {
+        if (ShouldThrow)
+        {
+            throw new InvalidOperationException("Simulated broker failure");
+        }
         PublishedEvents.Add((@event, routingKey));
         return Task.CompletedTask;
     }
@@ -178,7 +183,7 @@ public class TransactionsControllerTests : IDisposable
     [Fact]
     public async Task T03_CreateTransaction_WalletDoesNotExist_ReturnsBadRequest()
     {
-        _walletClient.Validator = _ => false;
+        _walletClient.Validator = _ => new WalletValidationResult(false, false);
 
         var request = new CreateTransactionRequest
         {
@@ -419,6 +424,181 @@ public class TransactionsControllerTests : IDisposable
         // User B's transaction unchanged
         var userBTx = _context.Transactions.First(t => t.UserId == _userIdB);
         Assert.Equal(oldCat, userBTx.CategoryId);
+    }
+
+    [Fact]
+    public async Task T13_CreateTransaction_ArchivedWallet_ReturnsBadRequest()
+    {
+        // N13: Không được tạo giao dịch trên ví đã archive
+        _walletClient.Validator = _ => new WalletValidationResult(true, true);
+
+        var request = new CreateTransactionRequest
+        {
+            WalletId = _walletIdA,
+            Type = 1,
+            Amount = 50000m
+        };
+
+        var result = await _controller.CreateTransaction(request) as BadRequestObjectResult;
+        Assert.NotNull(result);
+    }
+
+    [Fact]
+    public async Task T14_UpdateTransaction_MissingRowVersion_ReturnsBadRequest()
+    {
+        // N12: RowVersion là bắt buộc khi cập nhật
+        var tx = new Transaction
+        {
+            UserId = _userIdA,
+            WalletId = _walletIdA,
+            Type = TransactionType.Expense,
+            Amount = 50000m,
+            RowVersion = Guid.NewGuid()
+        };
+        _context.Transactions.Add(tx);
+        await _context.SaveChangesAsync();
+
+        var updateRequest = new UpdateTransactionRequest
+        {
+            WalletId = _walletIdA,
+            Type = 1,
+            Amount = 60000m,
+            RowVersion = null
+        };
+
+        var result = await _controller.UpdateTransaction(tx.Id, updateRequest) as BadRequestObjectResult;
+        Assert.NotNull(result);
+    }
+
+    [Fact]
+    public async Task T15_ReassignCategory_NonExistentReplacement_ReturnsBadRequest()
+    {
+        // N14: Danh mục thay thế không tồn tại
+        _categoryClient.Validator = _ => new CategoryValidationResult(false, null);
+
+        var request = new ReassignCategoryRequest
+        {
+            OldCategoryId = Guid.NewGuid(),
+            ReplacementCategoryId = Guid.NewGuid()
+        };
+
+        var result = await _controller.ReassignCategory(request) as BadRequestObjectResult;
+        Assert.NotNull(result);
+    }
+
+    [Fact]
+    public async Task T16_ReassignCategory_MismatchedType_ReturnsBadRequest()
+    {
+        // N14: Danh mục thay thế khác loại với giao dịch
+        var oldCat = Guid.NewGuid();
+        var newCat = Guid.NewGuid();
+
+        _context.Transactions.Add(new Transaction
+        {
+            UserId = _userIdA,
+            WalletId = _walletIdA,
+            CategoryId = oldCat,
+            Type = TransactionType.Expense, // Expense (1)
+            Amount = 10000m
+        });
+        await _context.SaveChangesAsync();
+
+        // Replacement category là Income (2)
+        _categoryClient.Validator = id => id == newCat
+            ? new CategoryValidationResult(true, 2)
+            : new CategoryValidationResult(true, 1);
+
+        var request = new ReassignCategoryRequest
+        {
+            OldCategoryId = oldCat,
+            ReplacementCategoryId = newCat
+        };
+
+        var result = await _controller.ReassignCategory(request) as BadRequestObjectResult;
+        Assert.NotNull(result);
+    }
+
+    [Fact]
+    public async Task T17_CreateTransaction_PublisherThrows_RollsBackAndReturns503()
+    {
+        // N15 / D30: Khi publish thất bại, DB rollback và trả 503
+        _eventPublisher.ShouldThrow = true;
+
+        var request = new CreateTransactionRequest
+        {
+            WalletId = _walletIdA,
+            Type = 1,
+            Amount = 50000m,
+            TransactionDate = DateTime.UtcNow
+        };
+
+        var result = await _controller.CreateTransaction(request) as ObjectResult;
+        Assert.NotNull(result);
+        Assert.Equal(503, result.StatusCode);
+
+        // Transaction không được lưu vào DB (rollback)
+        var count = await _context.Transactions.CountAsync(t => t.UserId == _userIdA);
+        Assert.Equal(0, count);
+    }
+
+    [Fact]
+    public async Task T18_UpdateTransaction_PublisherThrows_RollsBackAndReturns503()
+    {
+        // N15 / D30: Khi publish thất bại, DB rollback và trả 503
+        var tx = new Transaction
+        {
+            UserId = _userIdA,
+            WalletId = _walletIdA,
+            Type = TransactionType.Expense,
+            Amount = 50000m,
+            RowVersion = Guid.NewGuid()
+        };
+        _context.Transactions.Add(tx);
+        await _context.SaveChangesAsync();
+
+        _eventPublisher.ShouldThrow = true;
+
+        var updateRequest = new UpdateTransactionRequest
+        {
+            WalletId = _walletIdA,
+            Type = 1,
+            Amount = 70000m,
+            RowVersion = tx.RowVersion
+        };
+
+        var result = await _controller.UpdateTransaction(tx.Id, updateRequest) as ObjectResult;
+        Assert.NotNull(result);
+        Assert.Equal(503, result.StatusCode);
+
+        // Transaction trong DB vẫn giữ nguyên giá trị cũ
+        var currentTx = await _context.Transactions.AsNoTracking().FirstAsync(t => t.Id == tx.Id);
+        Assert.Equal(50000m, currentTx.Amount);
+    }
+
+    [Fact]
+    public async Task T19_DeleteTransaction_PublisherThrows_RollsBackAndReturns503()
+    {
+        // N15 / D30: Khi publish thất bại, DB rollback và trả 503
+        var tx = new Transaction
+        {
+            UserId = _userIdA,
+            WalletId = _walletIdA,
+            Type = TransactionType.Expense,
+            Amount = 50000m,
+            RowVersion = Guid.NewGuid()
+        };
+        _context.Transactions.Add(tx);
+        await _context.SaveChangesAsync();
+
+        _eventPublisher.ShouldThrow = true;
+
+        var result = await _controller.DeleteTransaction(tx.Id) as ObjectResult;
+        Assert.NotNull(result);
+        Assert.Equal(503, result.StatusCode);
+
+        // Transaction vẫn còn trong DB (rollback)
+        var exists = await _context.Transactions.AnyAsync(t => t.Id == tx.Id);
+        Assert.True(exists);
     }
 }
 

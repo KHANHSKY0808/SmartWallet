@@ -32,7 +32,7 @@ public class RabbitMqEventPublisher : IEventPublisher, IDisposable
             AutomaticRecoveryEnabled = true,
             NetworkRecoveryInterval = TimeSpan.FromSeconds(5),
             DispatchConsumersAsync = true,
-            RequestedConnectionTimeout = TimeSpan.FromMilliseconds(500)
+            RequestedConnectionTimeout = TimeSpan.FromSeconds(3)
         };
     }
 

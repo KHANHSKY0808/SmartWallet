@@ -15,11 +15,12 @@ namespace CategoryService.Tests;
 public class FakeTransactionClient : ITransactionClient
 {
     public (Guid OldId, Guid NewId)? LastReassignCall { get; private set; }
+    public bool ShouldSucceed { get; set; } = true;
 
     public Task<bool> ReassignCategoryAsync(Guid oldCategoryId, Guid replacementCategoryId, string? bearerToken = null, CancellationToken cancellationToken = default)
     {
         LastReassignCall = (oldCategoryId, replacementCategoryId);
-        return Task.FromResult(true);
+        return Task.FromResult(ShouldSucceed);
     }
 }
 
@@ -388,6 +389,40 @@ public class CategoriesControllerTests : IDisposable
         Assert.NotNull(fakeTxClient.LastReassignCall);
         Assert.Equal(idA, fakeTxClient.LastReassignCall.Value.OldId);
         Assert.Equal(idB, fakeTxClient.LastReassignCall.Value.NewId);
+    }
+
+    [Fact]
+    public async Task C20_DeleteCategory_ReassignFails_Returns502_CategoryNotDeleted()
+    {
+        // N16: Khi Reassign thất bại, Category không được xóa và trả 502
+        var fakeTxClient = new FakeTransactionClient { ShouldSucceed = false };
+        var controller = new CategoriesController(_context, NullLogger<CategoriesController>.Instance, fakeTxClient);
+
+        var claims = new ClaimsPrincipal(new ClaimsIdentity(new[]
+        {
+            new Claim(ClaimTypes.NameIdentifier, _userA.ToString()),
+            new Claim("sub", _userA.ToString()),
+            new Claim(ClaimTypes.Role, "User")
+        }, "TestAuth"));
+
+        controller.ControllerContext = new ControllerContext
+        {
+            HttpContext = new DefaultHttpContext { User = claims }
+        };
+
+        var catA = await controller.CreateCategory(new CreateCategoryRequest { Name = "Danh Mục Lỗi", Type = 1 }) as ObjectResult;
+        var catB = await controller.CreateCategory(new CreateCategoryRequest { Name = "Thay Thế Lỗi", Type = 1 }) as ObjectResult;
+
+        var idA = ((CategoryDto)catA!.Value!).Id;
+        var idB = ((CategoryDto)catB!.Value!).Id;
+
+        var deleteResult = await controller.DeleteCategory(idA, replacementId: idB) as ObjectResult;
+        Assert.NotNull(deleteResult);
+        Assert.Equal(502, deleteResult.StatusCode);
+
+        // Danh mục idA vẫn còn active trong CSDL
+        var categoryStillActive = await _context.Categories.AnyAsync(c => c.Id == idA && c.IsActive);
+        Assert.True(categoryStillActive);
     }
 
     public void Dispose()

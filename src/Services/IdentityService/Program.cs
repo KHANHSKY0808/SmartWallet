@@ -24,7 +24,10 @@ builder.Services.AddDbContext<IdentityDbContext>(options =>
 // Đăng ký Services nghiệp vụ Identity
 builder.Services.AddScoped<IPasswordHasher, PasswordHasher>();
 builder.Services.AddScoped<ITokenService, TokenService>();
-builder.Services.AddScoped<IEmailSender, LoggingEmailSender>();
+var emailChannel = System.Threading.Channels.Channel.CreateUnbounded<EmailMessage>();
+builder.Services.AddSingleton(emailChannel);
+builder.Services.AddSingleton<IEmailSender, LoggingEmailSender>();
+builder.Services.AddHostedService<EmailDispatchBackgroundService>();
 builder.Services.AddSingleton<IEventPublisher, RabbitMqEventPublisher>();
 
 // Cấu hình JWT Bearer chung từ SharedKernel

@@ -135,11 +135,15 @@ public class TransactionsController : ControllerBase
         var userId = GetCurrentUserId();
         var token = GetBearerToken();
 
-        // D1: REST GET sang WalletService để kiểm tra ví tồn tại và thuộc user
-        var walletValid = await _walletClient.ValidateWalletExistsAsync(request.WalletId, token);
-        if (!walletValid)
+        // D1 & N13: REST GET sang WalletService để kiểm tra ví tồn tại, thuộc user và chưa bị archive
+        var walletResult = await _walletClient.ValidateWalletAsync(request.WalletId, token);
+        if (!walletResult.Exists)
         {
             return BadRequest(new { message = "Ví không tồn tại hoặc không thuộc quyền sở hữu của người dùng" });
+        }
+        if (walletResult.IsArchived)
+        {
+            return BadRequest(new { code = "WALLET_ARCHIVED", message = "Không thể tạo giao dịch cho ví đã lưu trữ/đóng" });
         }
 
         // Kiểm tra Category nếu được truyền
@@ -171,13 +175,15 @@ public class TransactionsController : ControllerBase
             UpdatedAt = DateTime.UtcNow
         };
 
-        _context.Transactions.Add(tx);
-        await _context.SaveChangesAsync();
-
-        // Publish sự kiện TransactionCreatedEvent lên RabbitMQ để WalletService cập nhật số dư
-        if (_eventPublisher != null)
+        // D30: Mở DB transaction, lưu, publish có publisher confirm, rồi commit. Publish lỗi thì rollback và trả 503 EVENT_PUBLISH_FAILED
+        using var dbTx = await _context.Database.BeginTransactionAsync();
+        try
         {
-            try
+            _context.Transactions.Add(tx);
+            await _context.SaveChangesAsync();
+
+            // Publish sự kiện TransactionCreatedEvent lên RabbitMQ để WalletService cập nhật số dư
+            if (_eventPublisher != null)
             {
                 await _eventPublisher.PublishAsync(new TransactionCreatedEvent
                 {
@@ -191,13 +197,16 @@ public class TransactionsController : ControllerBase
                     Note = tx.Note
                 }, "transaction.created");
             }
-            catch (Exception ex)
-            {
-                _logger.LogWarning(ex, "Lỗi khi publish sự kiện TransactionCreatedEvent");
-            }
-        }
 
-        return StatusCode(201, ToDto(tx));
+            await dbTx.CommitAsync();
+            return StatusCode(201, ToDto(tx));
+        }
+        catch (Exception ex)
+        {
+            await dbTx.RollbackAsync();
+            _logger.LogError(ex, "Lỗi khi lưu giao dịch hoặc publish sự kiện TransactionCreatedEvent, đã rollback DB transaction");
+            return StatusCode(503, new { code = "EVENT_PUBLISH_FAILED", message = "Không thể publish sự kiện lên message broker, giao dịch đã được rollback." });
+        }
     }
 
     [HttpPut("{id:guid}")]
@@ -221,21 +230,31 @@ public class TransactionsController : ControllerBase
             return BadRequest(new { message = "Không thể chỉnh sửa trực tiếp giao dịch chuyển tiền" });
         }
 
+        // N12: RowVersion là bắt buộc khi cập nhật giao dịch
+        if (!request.RowVersion.HasValue || request.RowVersion.Value == Guid.Empty)
+        {
+            return BadRequest(new { code = "ROW_VERSION_REQUIRED", message = "Trường rowVersion là bắt buộc khi cập nhật giao dịch" });
+        }
+
         // Optimistic Concurrency check
-        if (request.RowVersion.HasValue && request.RowVersion.Value != tx.RowVersion)
+        if (request.RowVersion.Value != tx.RowVersion)
         {
             return StatusCode(409, new { code = "CONCURRENCY_CONFLICT", message = "Giao dịch đã bị thay đổi bởi phiên làm việc khác, vui lòng tải lại trang" });
         }
 
         var token = GetBearerToken();
 
-        // Validate ví mới nếu đổi ví
+        // Validate ví mới nếu đổi ví (N13: kiểm tra cả isArchived)
         if (request.WalletId != tx.WalletId)
         {
-            var walletValid = await _walletClient.ValidateWalletExistsAsync(request.WalletId, token);
-            if (!walletValid)
+            var walletResult = await _walletClient.ValidateWalletAsync(request.WalletId, token);
+            if (!walletResult.Exists)
             {
                 return BadRequest(new { message = "Ví mới không tồn tại hoặc không thuộc quyền sở hữu của người dùng" });
+            }
+            if (walletResult.IsArchived)
+            {
+                return BadRequest(new { code = "WALLET_ARCHIVED", message = "Không thể chuyển giao dịch sang ví đã lưu trữ/đóng" });
             }
         }
 
@@ -259,28 +278,25 @@ public class TransactionsController : ControllerBase
         var oldType = (int)tx.Type;
         var oldAmount = tx.Amount;
 
-        tx.WalletId = request.WalletId;
-        tx.CategoryId = request.CategoryId;
-        tx.Type = (TransactionType)request.Type;
-        tx.Amount = request.Amount;
-        tx.TransactionDate = request.TransactionDate == default ? tx.TransactionDate : request.TransactionDate;
-        tx.Note = request.Note?.Trim();
-        tx.RowVersion = Guid.NewGuid();
-        tx.UpdatedAt = DateTime.UtcNow;
-
+        // D30: Mở DB transaction, cập nhật, publish có publisher confirm, rồi commit. Publish lỗi thì rollback và trả 503 EVENT_PUBLISH_FAILED
+        using var dbTx = await _context.Database.BeginTransactionAsync();
         try
         {
-            await _context.SaveChangesAsync();
-        }
-        catch (DbUpdateConcurrencyException)
-        {
-            return StatusCode(409, new { code = "CONCURRENCY_CONFLICT", message = "Xung đột đồng thời khi cập nhật giao dịch" });
-        }
+            _context.Entry(tx).Property(t => t.RowVersion).OriginalValue = request.RowVersion.Value;
 
-        // Publish sự kiện TransactionUpdatedEvent lên RabbitMQ để WalletService cập nhật số dư chênh lệch
-        if (_eventPublisher != null)
-        {
-            try
+            tx.WalletId = request.WalletId;
+            tx.CategoryId = request.CategoryId;
+            tx.Type = (TransactionType)request.Type;
+            tx.Amount = request.Amount;
+            tx.TransactionDate = request.TransactionDate == default ? tx.TransactionDate : request.TransactionDate;
+            tx.Note = request.Note?.Trim();
+            tx.RowVersion = Guid.NewGuid();
+            tx.UpdatedAt = DateTime.UtcNow;
+
+            await _context.SaveChangesAsync();
+
+            // Publish sự kiện TransactionUpdatedEvent lên RabbitMQ để WalletService cập nhật số dư chênh lệch
+            if (_eventPublisher != null)
             {
                 await _eventPublisher.PublishAsync(new TransactionUpdatedEvent
                 {
@@ -297,13 +313,21 @@ public class TransactionsController : ControllerBase
                     TransactionDate = tx.TransactionDate
                 }, "transaction.updated");
             }
-            catch (Exception ex)
-            {
-                _logger.LogWarning(ex, "Lỗi khi publish sự kiện TransactionUpdatedEvent");
-            }
-        }
 
-        return Ok(ToDto(tx));
+            await dbTx.CommitAsync();
+            return Ok(ToDto(tx));
+        }
+        catch (DbUpdateConcurrencyException)
+        {
+            await dbTx.RollbackAsync();
+            return StatusCode(409, new { code = "CONCURRENCY_CONFLICT", message = "Xung đột đồng thời khi cập nhật giao dịch" });
+        }
+        catch (Exception ex)
+        {
+            await dbTx.RollbackAsync();
+            _logger.LogError(ex, "Lỗi khi cập nhật giao dịch hoặc publish sự kiện TransactionUpdatedEvent, đã rollback DB transaction");
+            return StatusCode(503, new { code = "EVENT_PUBLISH_FAILED", message = "Không thể publish sự kiện lên message broker, giao dịch đã được rollback." });
+        }
     }
 
     [HttpDelete("{id:guid}")]
@@ -322,13 +346,15 @@ public class TransactionsController : ControllerBase
             return BadRequest(new { message = "Không thể xóa trực tiếp giao dịch chuyển tiền" });
         }
 
-        _context.Transactions.Remove(tx);
-        await _context.SaveChangesAsync();
-
-        // Publish sự kiện TransactionDeletedEvent để hoàn tiền lại ví
-        if (_eventPublisher != null)
+        // D30: Mở DB transaction, xóa, publish có publisher confirm, rồi commit. Publish lỗi thì rollback và trả 503 EVENT_PUBLISH_FAILED
+        using var dbTx = await _context.Database.BeginTransactionAsync();
+        try
         {
-            try
+            _context.Transactions.Remove(tx);
+            await _context.SaveChangesAsync();
+
+            // Publish sự kiện TransactionDeletedEvent để hoàn tiền lại ví
+            if (_eventPublisher != null)
             {
                 await _eventPublisher.PublishAsync(new TransactionDeletedEvent
                 {
@@ -340,17 +366,22 @@ public class TransactionsController : ControllerBase
                     Amount = tx.Amount
                 }, "transaction.deleted");
             }
-            catch (Exception ex)
-            {
-                _logger.LogWarning(ex, "Lỗi khi publish sự kiện TransactionDeletedEvent");
-            }
-        }
 
-        return Ok(new { message = "Xóa giao dịch thành công" });
+            await dbTx.CommitAsync();
+            return Ok(new { message = "Xóa giao dịch thành công" });
+        }
+        catch (Exception ex)
+        {
+            await dbTx.RollbackAsync();
+            _logger.LogError(ex, "Lỗi khi xóa giao dịch hoặc publish sự kiện TransactionDeletedEvent, đã rollback DB transaction");
+            return StatusCode(503, new { code = "EVENT_PUBLISH_FAILED", message = "Không thể publish sự kiện lên message broker, giao dịch đã được rollback." });
+        }
     }
 
     /// <summary>
     /// AC9 (từ Sprint 2 / D27): Chuyển toàn bộ giao dịch của danh mục cũ sang danh mục thay thế khi xóa danh mục.
+    /// N14: Kiểm tra danh mục thay thế tồn tại, thuộc user, và cùng loại (Thu/Chi) trước khi chuyển.
+    /// Ghi nhận S4: Reassign cần phát sự kiện để BudgetService tính toán lại hạn mức chi tiêu.
     /// </summary>
     [HttpPost("reassign-category")]
     public async Task<IActionResult> ReassignCategory([FromBody] ReassignCategoryRequest request)
@@ -361,10 +392,26 @@ public class TransactionsController : ControllerBase
         }
 
         var userId = GetCurrentUserId();
+        var token = GetBearerToken();
+
+        // N14: Kiểm tra danh mục thay thế qua CategoryClient
+        var replacementResult = await _categoryClient.ValidateCategoryAsync(request.ReplacementCategoryId, token);
+        if (!replacementResult.Exists)
+        {
+            return BadRequest(new { message = "Danh mục thay thế không tồn tại hoặc không thuộc quyền sở hữu" });
+        }
 
         var affectedTransactions = await _context.Transactions
             .Where(t => t.UserId == userId && t.CategoryId == request.OldCategoryId)
             .ToListAsync();
+
+        if (affectedTransactions.Count > 0 && replacementResult.Type.HasValue)
+        {
+            if (affectedTransactions.Any(t => (int)t.Type != replacementResult.Type.Value))
+            {
+                return BadRequest(new { message = "Danh mục thay thế không cùng loại (Thu/Chi) với các giao dịch được chuyển" });
+            }
+        }
 
         foreach (var tx in affectedTransactions)
         {

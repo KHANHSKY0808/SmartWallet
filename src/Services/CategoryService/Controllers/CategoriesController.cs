@@ -304,11 +304,16 @@ public class CategoriesController : ControllerBase
                 return BadRequest(new { message = "Danh mục thay thế không tồn tại, khác loại hoặc không thuộc quyền truy cập" });
             }
 
-            // AC9 / D27: Gọi TransactionService để chuyển các giao dịch sang danh mục thay thế
+            // AC9 / D27 / N16: Gọi TransactionService để chuyển các giao dịch sang danh mục thay thế
             if (_transactionClient != null)
             {
                 var token = Request.Headers.Authorization.FirstOrDefault();
-                await _transactionClient.ReassignCategoryAsync(id, replacementId.Value, token);
+                var reassignSuccess = await _transactionClient.ReassignCategoryAsync(id, replacementId.Value, token);
+                if (!reassignSuccess)
+                {
+                    _logger.LogError("Không thể chuyển giao dịch sang danh mục thay thế {ReplacementId}", replacementId.Value);
+                    return StatusCode(502, new { code = "TRANSACTION_SERVICE_ERROR", message = "Không thể chuyển giao dịch sang danh mục thay thế do lỗi kết nối TransactionService" });
+                }
             }
         }
 

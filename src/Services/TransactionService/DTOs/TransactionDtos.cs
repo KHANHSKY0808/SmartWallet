@@ -40,6 +40,7 @@ public class UpdateTransactionRequest
     [MaxLength(1000, ErrorMessage = "Ghi chú tối đa 1000 ký tự")]
     public string? Note { get; set; }
 
+    [Required(ErrorMessage = "Trường rowVersion là bắt buộc")]
     public Guid? RowVersion { get; set; }
 }
 
