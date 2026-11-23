@@ -53,6 +53,21 @@ export const routes: Routes = [
     loadComponent: () => import('./features/categories/category-tree/category-tree.component').then(m => m.CategoryTreeComponent)
   },
   {
+    path: 'transactions',
+    canActivate: [authGuard],
+    loadComponent: () => import('./features/transactions/transaction-list/transaction-list.component').then(m => m.TransactionListComponent)
+  },
+  {
+    path: 'transactions/create',
+    canActivate: [authGuard],
+    loadComponent: () => import('./features/transactions/transaction-form/transaction-form.component').then(m => m.TransactionFormComponent)
+  },
+  {
+    path: 'transactions/edit/:id',
+    canActivate: [authGuard],
+    loadComponent: () => import('./features/transactions/transaction-form/transaction-form.component').then(m => m.TransactionFormComponent)
+  },
+  {
     path: '**',
     redirectTo: 'wallets'
   }

@@ -55,6 +55,9 @@ public abstract class BaseRabbitMqConsumer<TEvent> : BackgroundService where TEv
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
+        // O2: Nhường quyền thực thi để không block tiến trình khởi động đồng bộ của host
+        await Task.Yield();
+
         if (_connectionFactory is null)
         {
             return;

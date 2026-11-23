@@ -1,6 +1,7 @@
 using Microsoft.EntityFrameworkCore;
 using SharedKernel.Extensions;
 using SharedKernel.Messaging;
+using WalletService.Consumers;
 using WalletService.Data;
 using WalletService.Services;
 
@@ -32,7 +33,12 @@ builder.Services.AddHttpClient<IUserProfileClient, UserProfileClient>(client =>
 
 builder.Services.AddSingleton<IEventPublisher, RabbitMqEventPublisher>();
 
-// Khai báo topology queue transaction.money-transferred để hứng event wallet.transferred theo FIN-28 (V2, V3)
+// Đăng ký RabbitMQ Consumers cho các sự kiện giao dịch (FIN-36)
+builder.Services.AddHostedService<TransactionCreatedConsumer>();
+builder.Services.AddHostedService<TransactionUpdatedConsumer>();
+builder.Services.AddHostedService<TransactionDeletedConsumer>();
+
+// Khai báo topology queue transaction.money-transferred và các queue giao dịch
 try
 {
     var rmqHost = builder.Configuration["RabbitMQ:Host"] ?? "localhost";
@@ -40,6 +46,9 @@ try
     using var conn = factory.CreateConnection();
     using var ch = conn.CreateModel();
     RabbitMqTopology.DeclareConsumerQueue(ch, "transaction.money-transferred", "wallet.transferred");
+    RabbitMqTopology.DeclareConsumerQueue(ch, "wallet.transaction-created", "transaction.created");
+    RabbitMqTopology.DeclareConsumerQueue(ch, "wallet.transaction-updated", "transaction.updated");
+    RabbitMqTopology.DeclareConsumerQueue(ch, "wallet.transaction-deleted", "transaction.deleted");
 }
 catch (Exception)
 {

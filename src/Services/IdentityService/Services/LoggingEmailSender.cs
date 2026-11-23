@@ -36,7 +36,7 @@ public class LoggingEmailSender : IEmailSender
                     DeliveryMethod = SmtpDeliveryMethod.Network,
                     UseDefaultCredentials = false,
                     EnableSsl = false,
-                    Timeout = 3000
+                    Timeout = 500
                 };
 
                 var mailMessage = new MailMessage
@@ -48,7 +48,8 @@ public class LoggingEmailSender : IEmailSender
                 };
                 mailMessage.To.Add(to);
 
-                await client.SendMailAsync(mailMessage);
+                using var cts = new CancellationTokenSource(TimeSpan.FromMilliseconds(500));
+                await client.SendMailAsync(mailMessage, cts.Token);
                 _logger.LogInformation("✅ Email successfully forwarded to SMTP MailHog {Host}:{Port}", host, port);
             }
         }

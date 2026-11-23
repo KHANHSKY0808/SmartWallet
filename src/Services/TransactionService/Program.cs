@@ -1,4 +1,9 @@
-﻿using SharedKernel.Extensions;
+using Microsoft.EntityFrameworkCore;
+using SharedKernel.Extensions;
+using SharedKernel.Messaging;
+using TransactionService.Consumers;
+using TransactionService.Data;
+using TransactionService.Services;
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -9,6 +14,49 @@ builder.Services.AddEndpointsApiExplorer();
 // Cấu hình Swagger
 builder.Services.AddSwaggerGen();
 
+// Cấu hình Database SQLite
+var connectionString = builder.Configuration.GetConnectionString("DefaultConnection") 
+    ?? "Data Source=../../../database/transaction.db;Cache=Shared";
+builder.Services.AddDbContext<TransactionDbContext>(options =>
+{
+    options.UseSqlite(connectionString);
+});
+
+// Cấu hình HTTP Clients gọi WalletService và CategoryService với Polly timeout 3s (D1, D8)
+builder.Services.AddHttpClient<IWalletClient, WalletClient>(client =>
+{
+    var url = builder.Configuration["Services:WalletService:Url"] ?? "http://localhost:8003";
+    client.BaseAddress = new Uri(url);
+    client.Timeout = TimeSpan.FromSeconds(3);
+});
+
+builder.Services.AddHttpClient<ICategoryClient, CategoryClient>(client =>
+{
+    var url = builder.Configuration["Services:CategoryService:Url"] ?? "http://localhost:8005";
+    client.BaseAddress = new Uri(url);
+    client.Timeout = TimeSpan.FromSeconds(3);
+});
+
+// RabbitMQ Event Publisher
+builder.Services.AddSingleton<IEventPublisher, RabbitMqEventPublisher>();
+
+// Đăng ký RabbitMQ Consumer cho sự kiện MoneyTransferred (FIN-34b)
+builder.Services.AddHostedService<MoneyTransferredConsumer>();
+
+// Khai báo topology queue transaction.money-transferred
+try
+{
+    var rmqHost = builder.Configuration["RabbitMQ:Host"] ?? "localhost";
+    var factory = new RabbitMQ.Client.ConnectionFactory { HostName = rmqHost };
+    using var conn = factory.CreateConnection();
+    using var ch = conn.CreateModel();
+    RabbitMqTopology.DeclareConsumerQueue(ch, "transaction.money-transferred", "wallet.transferred");
+}
+catch (Exception)
+{
+    // Bỏ qua nếu RabbitMQ chưa sẵn sàng ở môi trường test không có broker
+}
+
 // Cấu hình JWT Bearer chung từ SharedKernel
 builder.Services.AddJwtAuthentication(builder.Configuration);
 
@@ -16,6 +64,18 @@ builder.Services.AddJwtAuthentication(builder.Configuration);
 builder.Services.AddConsulConfig(builder.Configuration);
 
 var app = builder.Build();
+
+// Khởi tạo Database và thực hiện Migrate
+using (var scope = app.Services.CreateScope())
+{
+    var context = scope.ServiceProvider.GetRequiredService<TransactionDbContext>();
+    var conn = context.Database.GetDbConnection();
+    if (!string.IsNullOrEmpty(conn.DataSource) && Path.GetDirectoryName(conn.DataSource) is { Length: > 0 } dir)
+    {
+        Directory.CreateDirectory(dir);
+    }
+    context.Database.Migrate();
+}
 
 if (app.Environment.IsDevelopment())
 {
@@ -41,3 +101,5 @@ app.UseConsulServiceRegistration(builder.Configuration, app.Lifetime);
 app.MapControllers();
 
 app.Run();
+
+public partial class Program { }

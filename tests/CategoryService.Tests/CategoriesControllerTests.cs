@@ -8,8 +8,20 @@ using CategoryService.Controllers;
 using CategoryService.Data;
 using CategoryService.DTOs;
 using CategoryService.Models;
+using CategoryService.Services;
 
 namespace CategoryService.Tests;
+
+public class FakeTransactionClient : ITransactionClient
+{
+    public (Guid OldId, Guid NewId)? LastReassignCall { get; private set; }
+
+    public Task<bool> ReassignCategoryAsync(Guid oldCategoryId, Guid replacementCategoryId, string? bearerToken = null, CancellationToken cancellationToken = default)
+    {
+        LastReassignCall = (oldCategoryId, replacementCategoryId);
+        return Task.FromResult(true);
+    }
+}
 
 public class CategoriesControllerTests : IDisposable
 {
@@ -344,6 +356,38 @@ public class CategoriesControllerTests : IDisposable
         Assert.Equal("Tên Mới", updated.Name);
         Assert.Equal("star", updated.Icon);
         Assert.Equal("#abcdef", updated.Color);
+    }
+
+    [Fact]
+    public async Task C19_DeleteCategory_WithReplacementId_CallsTransactionClientReassign()
+    {
+        var fakeTxClient = new FakeTransactionClient();
+        var controller = new CategoriesController(_context, NullLogger<CategoriesController>.Instance, fakeTxClient);
+
+        var claims = new ClaimsPrincipal(new ClaimsIdentity(new[]
+        {
+            new Claim(ClaimTypes.NameIdentifier, _userA.ToString()),
+            new Claim("sub", _userA.ToString()),
+            new Claim(ClaimTypes.Role, "User")
+        }, "TestAuth"));
+
+        controller.ControllerContext = new ControllerContext
+        {
+            HttpContext = new DefaultHttpContext { User = claims }
+        };
+
+        var catA = await controller.CreateCategory(new CreateCategoryRequest { Name = "Xóa Danh Mục", Type = 1 }) as ObjectResult;
+        var catB = await controller.CreateCategory(new CreateCategoryRequest { Name = "Danh Mục Thay Thế", Type = 1 }) as ObjectResult;
+
+        var idA = ((CategoryDto)catA!.Value!).Id;
+        var idB = ((CategoryDto)catB!.Value!).Id;
+
+        var deleteResult = await controller.DeleteCategory(idA, replacementId: idB) as OkObjectResult;
+        Assert.NotNull(deleteResult);
+
+        Assert.NotNull(fakeTxClient.LastReassignCall);
+        Assert.Equal(idA, fakeTxClient.LastReassignCall.Value.OldId);
+        Assert.Equal(idB, fakeTxClient.LastReassignCall.Value.NewId);
     }
 
     public void Dispose()

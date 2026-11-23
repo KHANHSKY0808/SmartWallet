@@ -211,6 +211,14 @@ public class ProfileService : IProfileService
             await _context.SaveChangesAsync();
             _logger.LogInformation("Created default profile for UserId {UserId}", userId);
         }
+        else if (existing.FullName == "Người dùng" && !string.IsNullOrWhiteSpace(fullName))
+        {
+            // O1: Cập nhật lại FullName nếu profile được khởi tạo tự động trước đó khi upload avatar
+            existing.FullName = fullName.Trim();
+            existing.UpdatedAt = DateTime.UtcNow;
+            await _context.SaveChangesAsync();
+            _logger.LogInformation("Updated profile FullName from UserRegisteredEvent for UserId {UserId}", userId);
+        }
     }
 
     private static bool IsValidImageMagicBytes(Stream stream, string extension)

@@ -31,7 +31,8 @@ public class RabbitMqEventPublisher : IEventPublisher, IDisposable
             Password = configuration["RabbitMQ:Password"] ?? "guest",
             AutomaticRecoveryEnabled = true,
             NetworkRecoveryInterval = TimeSpan.FromSeconds(5),
-            DispatchConsumersAsync = true
+            DispatchConsumersAsync = true,
+            RequestedConnectionTimeout = TimeSpan.FromMilliseconds(500)
         };
     }
 

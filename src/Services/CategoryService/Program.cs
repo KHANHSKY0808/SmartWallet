@@ -1,6 +1,7 @@
 using Microsoft.EntityFrameworkCore;
 using SharedKernel.Extensions;
 using CategoryService.Data;
+using CategoryService.Services;
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -17,6 +18,14 @@ var connectionString = builder.Configuration.GetConnectionString("DefaultConnect
 builder.Services.AddDbContext<CategoryDbContext>(options =>
 {
     options.UseSqlite(connectionString);
+});
+
+// Cấu hình HTTP Client gọi TransactionService (AC9: Reassign category)
+builder.Services.AddHttpClient<ITransactionClient, TransactionClient>(client =>
+{
+    var url = builder.Configuration["Services:TransactionService:Url"] ?? "http://localhost:8004";
+    client.BaseAddress = new Uri(url);
+    client.Timeout = TimeSpan.FromSeconds(3);
 });
 
 // Cấu hình JWT Bearer chung từ SharedKernel

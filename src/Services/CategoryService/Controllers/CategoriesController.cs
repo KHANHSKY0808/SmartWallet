@@ -6,6 +6,7 @@ using Microsoft.EntityFrameworkCore;
 using CategoryService.Data;
 using CategoryService.DTOs;
 using CategoryService.Models;
+using CategoryService.Services;
 
 namespace CategoryService.Controllers;
 
@@ -17,11 +18,16 @@ public class CategoriesController : ControllerBase
     private static readonly Regex ColorRegex = new(@"^#[0-9a-fA-F]{6}$", RegexOptions.Compiled);
     private readonly CategoryDbContext _context;
     private readonly ILogger<CategoriesController> _logger;
+    private readonly ITransactionClient? _transactionClient;
 
-    public CategoriesController(CategoryDbContext context, ILogger<CategoriesController> logger)
+    public CategoriesController(
+        CategoryDbContext context,
+        ILogger<CategoriesController> logger,
+        ITransactionClient? transactionClient = null)
     {
         _context = context;
         _logger = logger;
+        _transactionClient = transactionClient;
     }
 
     [HttpGet]
@@ -296,6 +302,13 @@ public class CategoriesController : ControllerBase
             if (replacement == null || replacement.Type != category.Type)
             {
                 return BadRequest(new { message = "Danh mục thay thế không tồn tại, khác loại hoặc không thuộc quyền truy cập" });
+            }
+
+            // AC9 / D27: Gọi TransactionService để chuyển các giao dịch sang danh mục thay thế
+            if (_transactionClient != null)
+            {
+                var token = Request.Headers.Authorization.FirstOrDefault();
+                await _transactionClient.ReassignCategoryAsync(id, replacementId.Value, token);
             }
         }
 
