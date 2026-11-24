@@ -74,12 +74,12 @@ public class CategoriesControllerTests : IDisposable
         Assert.NotNull(result);
         var categories = Assert.IsAssignableFrom<List<CategoryDto>>(result.Value);
 
-        // 12 danh mục cha
-        Assert.Equal(12, categories.Count);
+        // 16 danh mục cha (12 thường + 4 sổ nợ FIN-97b)
+        Assert.Equal(16, categories.Count);
 
-        // Tổng cộng cả cha và con = 20
+        // Tổng cộng cả cha và con = 24
         var totalCount = categories.Count + categories.Sum(c => c.Children.Count);
-        Assert.Equal(20, totalCount);
+        Assert.Equal(24, totalCount);
 
         // Các con lồng đúng dưới cha Ăn uống
         var food = categories.FirstOrDefault(c => c.Id == DefaultCategorySeeder.CatExpenseFood);
@@ -323,7 +323,8 @@ public class CategoriesControllerTests : IDisposable
         var categories = (List<CategoryDto>)res.Value!;
 
         Assert.All(categories, c => Assert.Equal(CategoryType.Income, c.Type));
-        Assert.Equal(4, categories.Count);
+        // 4 thu nhập ban đầu + 2 thu nhập sổ nợ (Thu nợ, Đi vay) = 6
+        Assert.Equal(6, categories.Count);
     }
 
     [Fact]

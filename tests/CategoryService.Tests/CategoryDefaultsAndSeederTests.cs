@@ -76,15 +76,15 @@ public class CategoryDefaultsAndSeederTests : IDisposable
         await DefaultCategorySeeder.SeedAsync(_context);
 
         var all = await _context.Categories.ToListAsync();
-        Assert.Equal(20, all.Count);
+        Assert.Equal(24, all.Count);
         Assert.All(all, c =>
         {
             Assert.Null(c.UserId);
             Assert.True(c.IsDefault);
         });
 
-        // 12 cha, 8 con
-        Assert.Equal(12, all.Count(c => c.ParentId == null));
+        // 16 cha (12 ban đầu + 4 sổ nợ FIN-97b), 8 con
+        Assert.Equal(16, all.Count(c => c.ParentId == null));
         Assert.Equal(8, all.Count(c => c.ParentId != null));
     }
 
@@ -95,7 +95,7 @@ public class CategoryDefaultsAndSeederTests : IDisposable
         await DefaultCategorySeeder.SeedAsync(_context);
 
         var count = await _context.Categories.CountAsync();
-        Assert.Equal(20, count);
+        Assert.Equal(24, count);
     }
 
     [Fact]

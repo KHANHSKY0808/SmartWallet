@@ -24,6 +24,8 @@ builder.Services.AddDbContext<NotificationDbContext>(options =>
 // Đăng ký Consumer thông báo ngân sách và mục tiêu hoàn thành
 builder.Services.AddHostedService<BudgetThresholdReachedConsumer>();
 builder.Services.AddHostedService<GoalCompletedConsumer>();
+builder.Services.AddHostedService<DueReminderConsumer>();
+builder.Services.AddHostedService<RecurringTransactionFailedConsumer>();
 
 // Khai báo topology queue thông báo
 try
@@ -34,6 +36,8 @@ try
     using var ch = conn.CreateModel();
     RabbitMqTopology.DeclareConsumerQueue(ch, "notification.budget-threshold", "budget.threshold_reached");
     RabbitMqTopology.DeclareConsumerQueue(ch, "notification.goal-completed", "goal.completed");
+    RabbitMqTopology.DeclareConsumerQueue(ch, "notification.due-reminder", "reminder.due");
+    RabbitMqTopology.DeclareConsumerQueue(ch, "notification.recurring-failed", "recurring.failed");
 }
 catch (Exception)
 {

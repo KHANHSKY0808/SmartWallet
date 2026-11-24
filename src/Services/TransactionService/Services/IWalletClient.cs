@@ -24,7 +24,10 @@ public class WalletClient : IWalletClient
     {
         try
         {
-            using var request = new HttpRequestMessage(HttpMethod.Get, $"/api/wallets/{walletId}");
+            var path = string.IsNullOrWhiteSpace(bearerToken)
+                ? $"/internal/wallets/{walletId}"
+                : $"/api/wallets/{walletId}";
+            using var request = new HttpRequestMessage(HttpMethod.Get, path);
             if (!string.IsNullOrWhiteSpace(bearerToken))
             {
                 request.Headers.Add("Authorization", bearerToken.StartsWith("Bearer ", StringComparison.OrdinalIgnoreCase) ? bearerToken : $"Bearer {bearerToken}");

@@ -335,6 +335,12 @@ public class TransactionsController : ControllerBase
             return BadRequest(new { message = "Không thể chỉnh sửa trực tiếp giao dịch chuyển tiền" });
         }
 
+        // D57 / DB-07: Giao dịch Debt hoặc Goal không sửa trực tiếp được
+        if (tx.SourceType == SourceType.Debt || tx.SourceType == SourceType.Goal)
+        {
+            return BadRequest(new { code = "MANAGED_BY_SOURCE", message = "Giao dịch được quản lý bởi nguồn khác, không thể sửa trực tiếp" });
+        }
+
         // N12: RowVersion là bắt buộc khi cập nhật giao dịch
         if (!request.RowVersion.HasValue || request.RowVersion.Value == Guid.Empty)
         {
@@ -529,6 +535,12 @@ public class TransactionsController : ControllerBase
             return BadRequest(new { message = "Không thể xóa trực tiếp giao dịch chuyển tiền" });
         }
 
+        // D57 / DB-07: Giao dịch Debt hoặc Goal không xóa trực tiếp được
+        if (tx.SourceType == SourceType.Debt || tx.SourceType == SourceType.Goal)
+        {
+            return BadRequest(new { code = "MANAGED_BY_SOURCE", message = "Giao dịch được quản lý bởi nguồn khác, không thể xóa trực tiếp" });
+        }
+
         // D30: Mở DB transaction, xóa, publish có publisher confirm, rồi commit. Publish lỗi thì rollback và trả 503 EVENT_PUBLISH_FAILED
         Guid? categoryParentId = null;
         if (tx.CategoryId.HasValue)
@@ -686,6 +698,9 @@ public class TransactionsController : ControllerBase
             Note = tx.Note,
             ReceiptImageUrl = tx.ReceiptImageUrl,
             ReceiptFileId = tx.ReceiptFileId,
+            SourceType = tx.SourceType.ToString(),
+            SourceId = tx.SourceId,
+            OccurrenceDate = tx.OccurrenceDate,
             RowVersion = tx.RowVersion,
             CreatedAt = tx.CreatedAt,
             UpdatedAt = tx.UpdatedAt

@@ -24,6 +24,9 @@ export interface TransactionDto {
   note?: string | null;
   receiptImageUrl?: string | null;
   receiptFileId?: string | null;
+  sourceType?: string;
+  sourceId?: string | null;
+  occurrenceDate?: string | null;
   tagIds?: string[];
   tags?: TagDto[];
   transferId?: string | null;

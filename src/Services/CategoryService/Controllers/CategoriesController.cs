@@ -86,6 +86,29 @@ public class CategoriesController : ControllerBase
         return Ok(ToDto(category));
     }
 
+    [AllowAnonymous]
+    [HttpGet("/internal/categories/{id:guid}")]
+    public async Task<IActionResult> GetInternalCategory(Guid id)
+    {
+        var category = await _context.Categories.AsNoTracking()
+            .FirstOrDefaultAsync(c => c.Id == id && c.IsActive);
+
+        if (category == null)
+        {
+            return NotFound(new { message = "Danh mục không tồn tại hoặc đã bị vô hiệu hóa." });
+        }
+
+        return Ok(new
+        {
+            id = category.Id,
+            userId = category.UserId,
+            name = category.Name,
+            type = (int)category.Type,
+            parentId = category.ParentId,
+            isDefault = category.IsDefault
+        });
+    }
+
     [HttpPost]
     public async Task<IActionResult> CreateCategory([FromBody] CreateCategoryRequest request)
     {

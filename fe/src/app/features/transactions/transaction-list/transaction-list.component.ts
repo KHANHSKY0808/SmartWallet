@@ -191,11 +191,17 @@ import { CategoryDto } from '../../../core/models/category.models';
                 <span *ngIf="tx.type === 3" style="color: #2563eb;">🔄 {{ tx.amount | number }} ₫</span>
               </td>
               <td style="padding: 0.75rem 1rem; text-align: center; white-space: nowrap;">
-                <ng-container *ngIf="tx.type !== 3">
+                <ng-container *ngIf="tx.type !== 3 && tx.sourceType !== 'Debt' && tx.sourceType !== 'Goal'">
                   <a [routerLink]="['/transactions/edit', tx.id]" style="color: #2563eb; text-decoration: none; margin-right: 0.75rem; font-weight: 500;">Sửa</a>
                   <button (click)="onDelete(tx)" style="background: none; border: none; color: #dc2626; cursor: pointer; font-weight: 500;">Xóa</button>
                 </ng-container>
-                <ng-container *ngIf="tx.type === 3">
+                <ng-container *ngIf="tx.sourceType === 'Debt'">
+                  <span style="background: #fef3c7; color: #b45309; padding: 0.15rem 0.4rem; border-radius: 4px; font-size: 0.8rem; font-weight: 500;">Sổ nợ</span>
+                </ng-container>
+                <ng-container *ngIf="tx.sourceType === 'Goal'">
+                  <span style="background: #e0e7ff; color: #4338ca; padding: 0.15rem 0.4rem; border-radius: 4px; font-size: 0.8rem; font-weight: 500;">Mục tiêu</span>
+                </ng-container>
+                <ng-container *ngIf="tx.type === 3 && tx.sourceType !== 'Goal'">
                   <span style="color: #94a3b8; font-size: 0.8rem; font-style: italic;">Chuyển tiền</span>
                 </ng-container>
               </td>

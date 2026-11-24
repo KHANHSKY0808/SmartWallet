@@ -60,6 +60,8 @@ public class GoalFundsDepositedConsumer : BaseRabbitMqConsumer<GoalFundsDeposite
             Amount = @event.Amount,
             TransactionDate = DateTime.UtcNow,
             Note = note,
+            SourceType = SourceType.Goal,
+            SourceId = @event.GoalId,
             RowVersion = Guid.NewGuid(),
             CreatedAt = DateTime.UtcNow,
             UpdatedAt = DateTime.UtcNow
@@ -124,6 +126,8 @@ public class GoalFundsWithdrawnConsumer : BaseRabbitMqConsumer<GoalFundsWithdraw
             Amount = @event.Amount,
             TransactionDate = DateTime.UtcNow,
             Note = note,
+            SourceType = SourceType.Goal,
+            SourceId = @event.GoalId,
             RowVersion = Guid.NewGuid(),
             CreatedAt = DateTime.UtcNow,
             UpdatedAt = DateTime.UtcNow

@@ -66,6 +66,9 @@ namespace TransactionService.Migrations
                         .HasMaxLength(1000)
                         .HasColumnType("TEXT");
 
+                    b.Property<DateOnly?>("OccurrenceDate")
+                        .HasColumnType("TEXT");
+
                     b.Property<Guid?>("ReceiptFileId")
                         .HasColumnType("TEXT");
 
@@ -76,6 +79,12 @@ namespace TransactionService.Migrations
                     b.Property<Guid>("RowVersion")
                         .IsConcurrencyToken()
                         .HasColumnType("TEXT");
+
+                    b.Property<Guid?>("SourceId")
+                        .HasColumnType("TEXT");
+
+                    b.Property<int>("SourceType")
+                        .HasColumnType("INTEGER");
 
                     b.Property<DateTime>("TransactionDate")
                         .HasColumnType("TEXT");
@@ -109,6 +118,10 @@ namespace TransactionService.Migrations
 
                     b.HasIndex("UserId", "WalletId")
                         .HasDatabaseName("IX_Transactions_UserId_WalletId");
+
+                    b.HasIndex("SourceType", "SourceId", "OccurrenceDate")
+                        .IsUnique()
+                        .HasFilter("SourceType = 2 AND SourceId IS NOT NULL AND OccurrenceDate IS NOT NULL");
 
                     b.ToTable("Transactions", (string)null);
                 });

@@ -88,6 +88,16 @@ export const routes: Routes = [
     loadComponent: () => import('./features/savings/saving-goal-list/saving-goal-list.component').then(m => m.SavingGoalListComponent)
   },
   {
+    path: 'recurring',
+    canActivate: [authGuard],
+    loadComponent: () => import('./features/recurring/recurring-list/recurring-list.component').then(m => m.RecurringListComponent)
+  },
+  {
+    path: 'debts',
+    canActivate: [authGuard],
+    loadComponent: () => import('./features/debts/debt-list/debt-list.component').then(m => m.DebtListComponent)
+  },
+  {
     path: '**',
     redirectTo: 'wallets'
   }

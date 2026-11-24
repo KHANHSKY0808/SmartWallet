@@ -103,4 +103,56 @@ public record GoalCompletedEvent : IntegrationEvent
     public decimal CurrentAmount { get; init; }
 }
 
+public record RecurringTransactionDueEvent : IntegrationEvent
+{
+    public Guid RuleId { get; init; }
+    public Guid UserId { get; init; }
+    public Guid WalletId { get; init; }
+    public Guid CategoryId { get; init; }
+    public int Type { get; init; } // 1: Expense, 2: Income
+    public decimal Amount { get; init; }
+    public DateOnly OccurrenceDate { get; init; }
+    public string RuleName { get; init; } = string.Empty;
+}
+
+public record RecurringTransactionFailedEvent : IntegrationEvent
+{
+    public Guid RuleId { get; init; }
+    public Guid UserId { get; init; }
+    public DateOnly OccurrenceDate { get; init; }
+    public string Reason { get; init; } = string.Empty;
+    public string RuleName { get; init; } = string.Empty;
+}
+
+public record DebtTransactionRequestedEvent : IntegrationEvent
+{
+    public Guid DebtId { get; init; }
+    public Guid? PaymentId { get; init; }
+    public Guid UserId { get; init; }
+    public Guid WalletId { get; init; }
+    public int Type { get; init; } // 1: Expense, 2: Income
+    public decimal Amount { get; init; }
+    public Guid CategoryId { get; init; }
+    public string Note { get; init; } = string.Empty;
+    public DateTime TransactionDate { get; init; }
+}
+
+public record DebtDeletedEvent : IntegrationEvent
+{
+    public Guid DebtId { get; init; }
+    public Guid UserId { get; init; }
+}
+
+public record DueReminderEvent : IntegrationEvent
+{
+    public Guid UserId { get; init; }
+    public Guid SourceId { get; init; }
+    public string Title { get; init; } = string.Empty;
+    public string Message { get; init; } = string.Empty;
+    public string ReminderType { get; init; } = "Reminder"; // "Recurring" | "Debt" | "Overdue"
+    public DateOnly DueDate { get; init; }
+    public decimal Amount { get; init; }
+}
+
+
 

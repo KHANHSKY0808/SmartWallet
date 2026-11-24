@@ -32,9 +32,15 @@ public static class DefaultCategorySeeder
     public static readonly Guid CatIncomeInvestment = Guid.Parse("10000000-0000-0000-0000-000000000019");
     public static readonly Guid CatIncomeOther = Guid.Parse("10000000-0000-0000-0000-000000000020");
 
+    // FIN-97b & D44: 4 danh mục hệ thống cho sổ nợ (DB-09)
+    public static readonly Guid CatExpenseLend = Guid.Parse("10000000-0000-0000-0000-000000000021");
+    public static readonly Guid CatIncomeDebtCollection = Guid.Parse("10000000-0000-0000-0000-000000000022");
+    public static readonly Guid CatIncomeBorrow = Guid.Parse("10000000-0000-0000-0000-000000000023");
+    public static readonly Guid CatExpenseDebtRepayment = Guid.Parse("10000000-0000-0000-0000-000000000024");
+
     public static async Task SeedAsync(CategoryDbContext context, ILogger? logger = null)
     {
-        // 12 danh mục cha
+        // 16 danh mục cha (8 chi thường + 4 thu thường + 2 chi nợ + 2 thu nợ)
         var defaultParents = new List<Category>
         {
             // Chi tiêu (8 cha)
@@ -51,7 +57,13 @@ public static class DefaultCategorySeeder
             new() { Id = CatIncomeSalary, Name = "Lương", Type = CategoryType.Income, Icon = "money-bill", Color = "#22c55e", IsDefault = true, SortOrder = 9 },
             new() { Id = CatIncomeBonus, Name = "Thưởng", Type = CategoryType.Income, Icon = "gift", Color = "#eab308", IsDefault = true, SortOrder = 10 },
             new() { Id = CatIncomeInvestment, Name = "Đầu tư", Type = CategoryType.Income, Icon = "chart-line", Color = "#14b8a6", IsDefault = true, SortOrder = 11 },
-            new() { Id = CatIncomeOther, Name = "Thu nhập khác", Type = CategoryType.Income, Icon = "coins", Color = "#64748b", IsDefault = true, SortOrder = 12 }
+            new() { Id = CatIncomeOther, Name = "Thu nhập khác", Type = CategoryType.Income, Icon = "coins", Color = "#64748b", IsDefault = true, SortOrder = 12 },
+
+            // Sổ nợ (4 cha hệ thống - D44 / FIN-97b / DB-09)
+            new() { Id = CatExpenseLend, Name = "Cho vay", Type = CategoryType.Expense, Icon = "hand-holding-usd", Color = "#ef4444", IsDefault = true, SortOrder = 13 },
+            new() { Id = CatIncomeDebtCollection, Name = "Thu nợ", Type = CategoryType.Income, Icon = "hand-holding-usd", Color = "#10b981", IsDefault = true, SortOrder = 14 },
+            new() { Id = CatIncomeBorrow, Name = "Đi vay", Type = CategoryType.Income, Icon = "receipt", Color = "#f59e0b", IsDefault = true, SortOrder = 15 },
+            new() { Id = CatExpenseDebtRepayment, Name = "Trả nợ", Type = CategoryType.Expense, Icon = "money-bill-wave", Color = "#6366f1", IsDefault = true, SortOrder = 16 }
         };
 
         // 8 danh mục con
@@ -86,7 +98,7 @@ public static class DefaultCategorySeeder
         }
 
         await context.SaveChangesAsync();
-        logger?.LogInformation("Hoàn tất khởi tạo seed 20 danh mục mặc định.");
+        logger?.LogInformation("Hoàn tất khởi tạo seed 24 danh mục mặc định.");
     }
 }
 

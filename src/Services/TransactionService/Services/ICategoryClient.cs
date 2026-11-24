@@ -24,7 +24,10 @@ public class CategoryClient : ICategoryClient
     {
         try
         {
-            using var request = new HttpRequestMessage(HttpMethod.Get, $"/api/categories/{categoryId}");
+            var path = string.IsNullOrWhiteSpace(bearerToken)
+                ? $"/internal/categories/{categoryId}"
+                : $"/api/categories/{categoryId}";
+            using var request = new HttpRequestMessage(HttpMethod.Get, path);
             if (!string.IsNullOrWhiteSpace(bearerToken))
             {
                 request.Headers.Add("Authorization", bearerToken.StartsWith("Bearer ", StringComparison.OrdinalIgnoreCase) ? bearerToken : $"Bearer {bearerToken}");

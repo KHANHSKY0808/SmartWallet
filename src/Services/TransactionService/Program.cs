@@ -51,6 +51,9 @@ builder.Services.AddSingleton<IEventPublisher, RabbitMqEventPublisher>();
 builder.Services.AddHostedService<MoneyTransferredConsumer>();
 builder.Services.AddHostedService<GoalFundsDepositedConsumer>();
 builder.Services.AddHostedService<GoalFundsWithdrawnConsumer>();
+builder.Services.AddHostedService<RecurringTransactionDueConsumer>();
+builder.Services.AddHostedService<DebtTransactionConsumer>();
+builder.Services.AddHostedService<DebtDeletedConsumer>();
 
 // Khai báo topology queue transaction.money-transferred và các queue goal
 try
@@ -62,6 +65,9 @@ try
     RabbitMqTopology.DeclareConsumerQueue(ch, "transaction.money-transferred", "wallet.transferred");
     RabbitMqTopology.DeclareConsumerQueue(ch, "transaction.goal-deposited", "goal.funds_deposited");
     RabbitMqTopology.DeclareConsumerQueue(ch, "transaction.goal-withdrawn", "goal.funds_withdrawn");
+    RabbitMqTopology.DeclareConsumerQueue(ch, "transaction.recurring-due", "recurring.due");
+    RabbitMqTopology.DeclareConsumerQueue(ch, "transaction.debt-requested", "debt.transaction_requested");
+    RabbitMqTopology.DeclareConsumerQueue(ch, "transaction.debt-deleted", "debt.deleted");
 }
 catch (Exception)
 {

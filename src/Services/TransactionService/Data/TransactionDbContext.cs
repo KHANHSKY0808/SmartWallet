@@ -89,6 +89,10 @@ public class TransactionDbContext : DbContext
             entity.HasIndex(e => e.ReceiptFileId)
                 .IsUnique()
                 .HasFilter("ReceiptFileId IS NOT NULL");
+
+            entity.HasIndex(e => new { e.SourceType, e.SourceId, e.OccurrenceDate })
+                .IsUnique()
+                .HasFilter("SourceType = 2 AND SourceId IS NOT NULL AND OccurrenceDate IS NOT NULL");
         });
     }
 }

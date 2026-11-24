@@ -9,6 +9,14 @@ public enum TransactionType
     Transfer = 3
 }
 
+public enum SourceType
+{
+    Manual = 1,
+    Recurring = 2,
+    Debt = 3,
+    Goal = 4
+}
+
 public class Transaction
 {
     [Key]
@@ -36,6 +44,12 @@ public class Transaction
     public string? ReceiptImageUrl { get; set; }
 
     public Guid? ReceiptFileId { get; set; }
+
+    public SourceType SourceType { get; set; } = SourceType.Manual;
+
+    public Guid? SourceId { get; set; }
+
+    public DateOnly? OccurrenceDate { get; set; }
 
     /// <summary>
     /// Lưu TransferId khi giao dịch được tạo tự động từ sự kiện MoneyTransferred (Type = 3)

@@ -600,5 +600,88 @@ public class TransactionsControllerTests : IDisposable
         var exists = await _context.Transactions.AnyAsync(t => t.Id == tx.Id);
         Assert.True(exists);
     }
+
+    [Fact]
+    public async Task Test_DB07_Delete_Debt_Transaction_Returns_400_MANAGED_BY_SOURCE()
+    {
+        // DB-07 / D57: Giao dịch có SourceType = Debt hoặc Goal không thể xóa trực tiếp
+        var tx = new Transaction
+        {
+            UserId = _userIdA,
+            WalletId = _walletIdA,
+            Type = TransactionType.Expense,
+            Amount = 5_000_000m,
+            SourceType = SourceType.Debt,
+            SourceId = Guid.NewGuid(),
+            RowVersion = Guid.NewGuid()
+        };
+        _context.Transactions.Add(tx);
+        await _context.SaveChangesAsync();
+
+        var result = await _controller.DeleteTransaction(tx.Id) as BadRequestObjectResult;
+        Assert.NotNull(result);
+        Assert.Equal(400, result.StatusCode);
+
+        // Verify code MANAGED_BY_SOURCE
+        var json = System.Text.Json.JsonSerializer.Serialize(result.Value);
+        Assert.Contains("MANAGED_BY_SOURCE", json);
+    }
+
+    [Fact]
+    public async Task Test_DB07_Update_Debt_Transaction_Returns_400_MANAGED_BY_SOURCE()
+    {
+        // DB-07 / D57: Giao dịch có SourceType = Debt hoặc Goal không thể sửa trực tiếp
+        var tx = new Transaction
+        {
+            UserId = _userIdA,
+            WalletId = _walletIdA,
+            Type = TransactionType.Expense,
+            Amount = 5_000_000m,
+            SourceType = SourceType.Debt,
+            SourceId = Guid.NewGuid(),
+            RowVersion = Guid.NewGuid()
+        };
+        _context.Transactions.Add(tx);
+        await _context.SaveChangesAsync();
+
+        var updateReq = new UpdateTransactionRequest
+        {
+            WalletId = _walletIdA,
+            Type = 1,
+            Amount = 4_000_000m,
+            TransactionDate = DateTime.UtcNow,
+            RowVersion = tx.RowVersion
+        };
+
+        var result = await _controller.UpdateTransaction(tx.Id, updateReq) as BadRequestObjectResult;
+        Assert.NotNull(result);
+        Assert.Equal(400, result.StatusCode);
+
+        var json = System.Text.Json.JsonSerializer.Serialize(result.Value);
+        Assert.Contains("MANAGED_BY_SOURCE", json);
+    }
+
+    [Fact]
+    public async Task Test_SC14_Update_Delete_Recurring_Transaction_Allowed()
+    {
+        // SC-14 / D57: Giao dịch sinh ra từ Recurring là giao dịch thường, sửa/xóa được
+        var tx = new Transaction
+        {
+            UserId = _userIdA,
+            WalletId = _walletIdA,
+            Type = TransactionType.Expense,
+            Amount = 260_000m,
+            SourceType = SourceType.Recurring,
+            SourceId = Guid.NewGuid(),
+            OccurrenceDate = new DateOnly(2027, 1, 31),
+            RowVersion = Guid.NewGuid()
+        };
+        _context.Transactions.Add(tx);
+        await _context.SaveChangesAsync();
+
+        var result = await _controller.DeleteTransaction(tx.Id) as OkObjectResult;
+        Assert.NotNull(result);
+        Assert.Equal(200, result.StatusCode);
+    }
 }
 

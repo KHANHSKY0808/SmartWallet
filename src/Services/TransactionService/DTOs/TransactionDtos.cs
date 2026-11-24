@@ -97,6 +97,9 @@ public class TransactionDto
     public string? Note { get; set; }
     public string? ReceiptImageUrl { get; set; }
     public Guid? ReceiptFileId { get; set; }
+    public string SourceType { get; set; } = "Manual";
+    public Guid? SourceId { get; set; }
+    public DateOnly? OccurrenceDate { get; set; }
     public List<Guid> TagIds { get; set; } = new();
     public List<TagDto> Tags { get; set; } = new();
     public Guid RowVersion { get; set; }
