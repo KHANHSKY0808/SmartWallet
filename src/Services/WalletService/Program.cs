@@ -22,7 +22,7 @@ builder.Services.AddDbContext<WalletDbContext>(options =>
     options.UseSqlite(connectionString);
 });
 
-// Đăng ký Ledger và HTTP Client gọi UserProfileService
+// Đăng ký Ledger và HTTP Client gọi UserProfileService và SavingGoalService
 builder.Services.AddScoped<IWalletLedger, WalletLedger>();
 builder.Services.AddHttpClient<IUserProfileClient, UserProfileClient>(client =>
 {
@@ -31,12 +31,20 @@ builder.Services.AddHttpClient<IUserProfileClient, UserProfileClient>(client =>
     client.Timeout = TimeSpan.FromSeconds(3); // D8: timeout 3s
 });
 
+builder.Services.AddHttpClient<ISavingGoalClient, SavingGoalClient>(client =>
+{
+    var url = builder.Configuration["Services:SavingGoalService:Url"] ?? "http://localhost:8007";
+    client.BaseAddress = new Uri(url);
+    client.Timeout = TimeSpan.FromSeconds(3);
+});
+
 builder.Services.AddSingleton<IEventPublisher, RabbitMqEventPublisher>();
 
-// Đăng ký RabbitMQ Consumers cho các sự kiện giao dịch (FIN-36)
+// Đăng ký RabbitMQ Consumers cho các sự kiện giao dịch (FIN-36) và rút tiền mục tiêu (FIN-82)
 builder.Services.AddHostedService<TransactionCreatedConsumer>();
 builder.Services.AddHostedService<TransactionUpdatedConsumer>();
 builder.Services.AddHostedService<TransactionDeletedConsumer>();
+builder.Services.AddHostedService<GoalFundsWithdrawnConsumer>();
 
 // Khai báo topology queue transaction.money-transferred và các queue giao dịch
 try
@@ -49,6 +57,7 @@ try
     RabbitMqTopology.DeclareConsumerQueue(ch, "wallet.transaction-created", "transaction.created");
     RabbitMqTopology.DeclareConsumerQueue(ch, "wallet.transaction-updated", "transaction.updated");
     RabbitMqTopology.DeclareConsumerQueue(ch, "wallet.transaction-deleted", "transaction.deleted");
+    RabbitMqTopology.DeclareConsumerQueue(ch, "wallet.funds-withdrawn", "goal.funds_withdrawn");
 }
 catch (Exception)
 {

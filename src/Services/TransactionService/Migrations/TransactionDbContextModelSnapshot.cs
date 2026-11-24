@@ -17,6 +17,35 @@ namespace TransactionService.Migrations
 #pragma warning disable 612, 618
             modelBuilder.HasAnnotation("ProductVersion", "10.0.14");
 
+            modelBuilder.Entity("TransactionService.Models.Tag", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("Color")
+                        .HasMaxLength(20)
+                        .HasColumnType("TEXT");
+
+                    b.Property<DateTime>("CreatedAt")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("Name")
+                        .IsRequired()
+                        .HasMaxLength(50)
+                        .HasColumnType("TEXT");
+
+                    b.Property<Guid>("UserId")
+                        .HasColumnType("TEXT");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("UserId", "Name")
+                        .IsUnique();
+
+                    b.ToTable("Tags", (string)null);
+                });
+
             modelBuilder.Entity("TransactionService.Models.Transaction", b =>
                 {
                     b.Property<Guid>("Id")
@@ -35,6 +64,9 @@ namespace TransactionService.Migrations
 
                     b.Property<string>("Note")
                         .HasMaxLength(1000)
+                        .HasColumnType("TEXT");
+
+                    b.Property<Guid?>("ReceiptFileId")
                         .HasColumnType("TEXT");
 
                     b.Property<string>("ReceiptImageUrl")
@@ -65,6 +97,10 @@ namespace TransactionService.Migrations
 
                     b.HasKey("Id");
 
+                    b.HasIndex("ReceiptFileId")
+                        .IsUnique()
+                        .HasFilter("ReceiptFileId IS NOT NULL");
+
                     b.HasIndex("UserId", "CategoryId")
                         .HasDatabaseName("IX_Transactions_UserId_CategoryId");
 
@@ -75,6 +111,40 @@ namespace TransactionService.Migrations
                         .HasDatabaseName("IX_Transactions_UserId_WalletId");
 
                     b.ToTable("Transactions", (string)null);
+                });
+
+            modelBuilder.Entity("TransactionService.Models.TransactionTag", b =>
+                {
+                    b.Property<Guid>("TransactionId")
+                        .HasColumnType("TEXT");
+
+                    b.Property<Guid>("TagId")
+                        .HasColumnType("TEXT");
+
+                    b.HasKey("TransactionId", "TagId");
+
+                    b.HasIndex("TagId");
+
+                    b.ToTable("TransactionTags", (string)null);
+                });
+
+            modelBuilder.Entity("TransactionService.Models.TransactionTag", b =>
+                {
+                    b.HasOne("TransactionService.Models.Tag", "Tag")
+                        .WithMany()
+                        .HasForeignKey("TagId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.HasOne("TransactionService.Models.Transaction", "Transaction")
+                        .WithMany()
+                        .HasForeignKey("TransactionId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.Navigation("Tag");
+
+                    b.Navigation("Transaction");
                 });
 #pragma warning restore 612, 618
         }

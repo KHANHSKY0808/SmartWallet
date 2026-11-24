@@ -6,7 +6,8 @@ import {
   CreateTransactionRequest,
   UpdateTransactionRequest,
   TransactionQueryParameters,
-  PagedResult
+  PagedResult,
+  TagDto
 } from '../models/transaction.models';
 
 @Injectable({
@@ -30,6 +31,7 @@ export class TransactionService {
       if (params.minAmount !== undefined) httpParams = httpParams.set('minAmount', params.minAmount.toString());
       if (params.maxAmount !== undefined) httpParams = httpParams.set('maxAmount', params.maxAmount.toString());
       if (params.keyword) httpParams = httpParams.set('keyword', params.keyword);
+      if (params.tagIds) httpParams = httpParams.set('tagIds', params.tagIds);
       if (params.sortBy) httpParams = httpParams.set('sortBy', params.sortBy);
       if (params.sortOrder) httpParams = httpParams.set('sortOrder', params.sortOrder);
     }
@@ -51,6 +53,20 @@ export class TransactionService {
 
   deleteTransaction(id: string): Observable<{ message: string }> {
     return this.http.delete<{ message: string }>(`${this.apiUrl}/${id}`);
+  }
+
+  uploadReceipt(file: File): Observable<{ id: string }> {
+    const formData = new FormData();
+    formData.append('file', file);
+    return this.http.post<{ id: string }>('/api/files/receipts', formData);
+  }
+
+  getTags(): Observable<TagDto[]> {
+    return this.http.get<TagDto[]>('/api/transactions/tags');
+  }
+
+  createTag(name: string, color?: string): Observable<TagDto> {
+    return this.http.post<TagDto>('/api/transactions/tags', { name, color });
   }
 }
 

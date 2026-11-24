@@ -93,12 +93,13 @@ describe('WalletFormComponent', () => {
     expect(errorEl?.textContent).toContain('Tên ví đã tồn tại');
   });
 
-  it('D29: should only offer VND as currency option in Sprint 2 MVP', () => {
+  it('F-03: should offer VND, USD, and EUR as currency options (lifting D29)', () => {
     const compiled = fixture.nativeElement as HTMLElement;
     const select = compiled.querySelector('#currency') as HTMLSelectElement;
     expect(select).toBeTruthy();
-    expect(select.options.length).toBe(1);
-    expect(select.options[0].value).toBe('VND');
+    expect(select.options.length).toBe(3);
+    const values = Array.from(select.options).map(o => o.value);
+    expect(values).toEqual(['VND', 'USD', 'EUR']);
   });
 });
 

@@ -29,6 +29,7 @@ public class WalletsController : ControllerBase
     private readonly IWalletLedger _walletLedger;
     private readonly IUserProfileClient _userProfileClient;
     private readonly IEventPublisher? _eventPublisher;
+    private readonly ISavingGoalClient? _savingGoalClient;
     private readonly ILogger<WalletsController> _logger;
 
     public WalletsController(
@@ -36,13 +37,15 @@ public class WalletsController : ControllerBase
         IWalletLedger walletLedger,
         IUserProfileClient userProfileClient,
         ILogger<WalletsController> logger,
-        IEventPublisher? eventPublisher = null)
+        IEventPublisher? eventPublisher = null,
+        ISavingGoalClient? savingGoalClient = null)
     {
         _context = context;
         _walletLedger = walletLedger;
         _userProfileClient = userProfileClient;
         _logger = logger;
         _eventPublisher = eventPublisher;
+        _savingGoalClient = savingGoalClient;
     }
 
     [HttpGet]
@@ -107,10 +110,10 @@ public class WalletsController : ControllerBase
         }
 
         var currency = string.IsNullOrWhiteSpace(request.Currency) ? "VND" : request.Currency.Trim().ToUpperInvariant();
-        // D29: Sprint 2 MVP Wallet chỉ hỗ trợ VND. POST/PUT tiền tệ khác trả 400 UNSUPPORTED_CURRENCY
-        if (currency != "VND")
+        // FIN-130 / D29 gỡ bỏ: Hỗ trợ VND, USD, EUR. Các tiền tệ khác trả 400 UNSUPPORTED_CURRENCY
+        if (!AllowedCurrencies.Contains(currency))
         {
-            return BadRequest(new { code = "UNSUPPORTED_CURRENCY", message = $"Sprint 2 MVP hiện chỉ hỗ trợ tiền tệ 'VND', không hỗ trợ '{currency}'." });
+            return BadRequest(new { code = "UNSUPPORTED_CURRENCY", message = $"Tiền tệ '{currency}' không được hỗ trợ. Chỉ hỗ trợ: {string.Join(", ", AllowedCurrencies)}." });
         }
 
         // D19: Unique tên trong các ví chưa archive của user, Trim và không phân biệt hoa thường
@@ -187,13 +190,13 @@ public class WalletsController : ControllerBase
             return StatusCode(409, new { code = "DUPLICATE_WALLET_NAME", message = "Tên ví đã tồn tại trong các ví đang hoạt động" });
         }
 
-        // Đổi tiền tệ: D29 Sprint 2 MVP chỉ hỗ trợ VND, W-13 không cho đổi nếu Balance khác InitialBalance
+        // Đổi tiền tệ: FIN-130 hỗ trợ VND, USD, EUR, W-13 không cho đổi nếu Balance khác InitialBalance
         if (!string.IsNullOrWhiteSpace(request.Currency))
         {
             var newCurrency = request.Currency.Trim().ToUpperInvariant();
-            if (newCurrency != "VND")
+            if (!AllowedCurrencies.Contains(newCurrency))
             {
-                return BadRequest(new { code = "UNSUPPORTED_CURRENCY", message = $"Sprint 2 MVP hiện chỉ hỗ trợ tiền tệ 'VND', không hỗ trợ '{newCurrency}'." });
+                return BadRequest(new { code = "UNSUPPORTED_CURRENCY", message = $"Tiền tệ '{newCurrency}' không được hỗ trợ. Chỉ hỗ trợ: {string.Join(", ", AllowedCurrencies)}." });
             }
 
             if (!string.Equals(wallet.Currency, newCurrency, StringComparison.OrdinalIgnoreCase))
@@ -538,6 +541,180 @@ public class WalletsController : ControllerBase
         return Guid.Empty;
     }
 
+    [HttpPost("{walletId:guid}/goal-transfer")]
+    public async Task<IActionResult> GoalTransfer(
+        [FromRoute] Guid walletId,
+        [FromHeader(Name = "Idempotency-Key")] string? idempotencyKey,
+        [FromBody] GoalTransferRequest request)
+    {
+        if (string.IsNullOrWhiteSpace(idempotencyKey))
+        {
+            return BadRequest(new { message = "Header 'Idempotency-Key' là bắt buộc." });
+        }
+
+        var keyStr = idempotencyKey.Trim();
+        var userId = GetCurrentUserId();
+
+        // Idempotency check
+        var existingKey = await _context.IdempotencyKeys.FindAsync(userId, keyStr);
+        if (existingKey != null)
+        {
+            var cached = JsonSerializer.Deserialize<object>(existingKey.ResponseBody);
+            return StatusCode(existingKey.StatusCode, cached);
+        }
+
+        if (request.Amount <= 0)
+        {
+            return BadRequest(new { message = "Số tiền phải lớn hơn 0." });
+        }
+
+        var wallet = await _context.Wallets.FirstOrDefaultAsync(w => w.Id == walletId && w.UserId == userId && !w.IsArchived);
+        if (wallet == null)
+        {
+            return NotFound(new { message = "Không tìm thấy ví hoặc ví đã bị lưu trữ." });
+        }
+
+        string goalName = "Mục tiêu tiết kiệm";
+        if (_savingGoalClient != null)
+        {
+            var token = Request.Headers["Authorization"].ToString();
+            var goal = await _savingGoalClient.GetGoalAsync(request.GoalId, token);
+            if (goal == null || goal.UserId != userId)
+            {
+                return NotFound(new { message = "Không tìm thấy mục tiêu tiết kiệm." });
+            }
+
+            if (goal.StatusCode == 2 || string.Equals(goal.Status, "Completed", StringComparison.OrdinalIgnoreCase))
+            {
+                return BadRequest(new { code = "GOAL_COMPLETED", message = "Mục tiêu đã hoàn thành, không thể nạp thêm." });
+            }
+
+            if (goal.StatusCode == 3 || string.Equals(goal.Status, "Cancelled", StringComparison.OrdinalIgnoreCase))
+            {
+                return BadRequest(new { code = "GOAL_CANCELLED", message = "Mục tiêu đã bị hủy." });
+            }
+
+            if (!string.Equals(goal.Currency, wallet.Currency, StringComparison.OrdinalIgnoreCase))
+            {
+                return BadRequest(new { code = "CURRENCY_MISMATCH", message = "Tiền tệ ví và mục tiêu không khớp." });
+            }
+
+            goalName = goal.Name;
+        }
+
+        if (wallet.Balance < request.Amount)
+        {
+            return BadRequest(new { code = "INSUFFICIENT_BALANCE", message = "Số dư ví không đủ." });
+        }
+
+        await using var tx = await _context.Database.BeginTransactionAsync(System.Data.IsolationLevel.Serializable);
+        try
+        {
+            wallet.Balance -= request.Amount;
+            wallet.RowVersion = Guid.NewGuid().ToByteArray();
+
+            var history = new WalletBalanceHistory
+            {
+                WalletId = wallet.Id,
+                UserId = userId,
+                Reason = BalanceChangeReason.GoalDeposit,
+                ChangeAmount = -request.Amount,
+                BalanceAfter = wallet.Balance,
+                EntityId = request.GoalId,
+                CreatedAt = DateTime.UtcNow
+            };
+            await _context.WalletBalanceHistory.AddAsync(history);
+
+            var responseObj = new
+            {
+                newBalance = wallet.Balance,
+                balance = wallet.Balance,
+                walletId = wallet.Id,
+                amount = request.Amount
+            };
+            var responseJson = JsonSerializer.Serialize(responseObj);
+
+            _context.IdempotencyKeys.Add(new IdempotencyRecord
+            {
+                UserId = userId,
+                IdempotencyKey = keyStr,
+                Operation = "GoalTransfer",
+                RequestHash = keyStr,
+                StatusCode = 200,
+                ResponseBody = responseJson,
+                CreatedAt = DateTime.UtcNow,
+                ExpiresAt = DateTime.UtcNow.AddHours(24)
+            });
+
+            await _context.SaveChangesAsync();
+
+            if (_eventPublisher != null)
+            {
+                var eventId = new Guid(System.Security.Cryptography.MD5.HashData(System.Text.Encoding.UTF8.GetBytes($"goal-deposit:{userId}:{keyStr}")));
+                await _eventPublisher.PublishAsync(new GoalFundsDepositedEvent
+                {
+                    Id = eventId,
+                    GoalId = request.GoalId,
+                    WalletId = wallet.Id,
+                    UserId = userId,
+                    Amount = request.Amount,
+                    GoalName = goalName
+                }, "goal.funds_deposited");
+            }
+
+            await tx.CommitAsync();
+
+            return Ok(responseObj);
+        }
+        catch (DbUpdateConcurrencyException)
+        {
+            await tx.RollbackAsync();
+            return StatusCode(409, new { code = "CONCURRENCY_CONFLICT", message = "Xung đột đồng thời khi cập nhật ví, vui lòng thử lại." });
+        }
+        catch (DbUpdateException)
+        {
+            await tx.RollbackAsync();
+            _context.ChangeTracker.Clear();
+            for (var retry = 0; retry < 10; retry++)
+            {
+                var keyRecord = await _context.IdempotencyKeys.AsNoTracking()
+                    .FirstOrDefaultAsync(k => k.UserId == userId && k.IdempotencyKey == keyStr);
+                if (keyRecord != null)
+                {
+                    var cached = JsonSerializer.Deserialize<object>(keyRecord.ResponseBody);
+                    return StatusCode(keyRecord.StatusCode, cached);
+                }
+                await Task.Delay(50);
+            }
+
+            return StatusCode(409, new { code = "CONCURRENCY_CONFLICT", message = "Xung đột đồng thời khi nạp tiền mục tiêu." });
+        }
+        catch (Microsoft.Data.Sqlite.SqliteException ex) when (ex.SqliteErrorCode == 5)
+        {
+            await tx.RollbackAsync();
+            _context.ChangeTracker.Clear();
+            for (var retry = 0; retry < 10; retry++)
+            {
+                var keyRecord = await _context.IdempotencyKeys.AsNoTracking()
+                    .FirstOrDefaultAsync(k => k.UserId == userId && k.IdempotencyKey == keyStr);
+                if (keyRecord != null)
+                {
+                    var cached = JsonSerializer.Deserialize<object>(keyRecord.ResponseBody);
+                    return StatusCode(keyRecord.StatusCode, cached);
+                }
+                await Task.Delay(50);
+            }
+
+            return StatusCode(409, new { code = "CONCURRENCY_CONFLICT", message = "Cơ sở dữ liệu đang bận, vui lòng thử lại." });
+        }
+        catch (Exception ex)
+        {
+            await tx.RollbackAsync();
+            _logger.LogError(ex, "Lỗi khi nạp tiền mục tiêu {GoalId} từ ví {WalletId}", request.GoalId, walletId);
+            return StatusCode(503, new { code = "EVENT_PUBLISH_FAILED", message = "Không thể hoàn tất giao dịch nạp tiền. Vui lòng thử lại." });
+        }
+    }
+
     private static WalletDto ToDto(Wallet w) => new()
     {
         Id = w.Id,
@@ -553,4 +730,11 @@ public class WalletsController : ControllerBase
         CreatedAt = w.CreatedAt,
         UpdatedAt = w.UpdatedAt
     };
+}
+
+public class GoalTransferRequest
+{
+    public Guid GoalId { get; set; }
+    public decimal Amount { get; set; }
+    public string Direction { get; set; } = "deposit";
 }

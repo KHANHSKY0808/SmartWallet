@@ -424,19 +424,30 @@ public class WalletsControllerTests : IDisposable
     [Fact]
     public async Task W24_CreateOrUpdateWallet_NonVndCurrency_Returns400UnsupportedCurrency()
     {
-        // 1. Create with USD -> 400 UNSUPPORTED_CURRENCY
+        // 1. Create with unsupported currency XYZ -> 400 UNSUPPORTED_CURRENCY (FIN-130: USD/EUR now allowed, XYZ rejected)
         var createRes = await _controller.CreateWallet(new CreateWalletRequest
         {
-            Name = "Ví USD",
+            Name = "Ví XYZ",
             Type = 2,
             InitialBalance = 100m,
-            Currency = "USD"
+            Currency = "XYZ"
         }) as BadRequestObjectResult;
 
         Assert.NotNull(createRes);
         Assert.Equal(400, createRes.StatusCode);
 
-        // 2. Create VND wallet then PUT EUR -> 400 UNSUPPORTED_CURRENCY
+        // 2. Create USD wallet -> 201 Created (FIN-130 reopen)
+        var usdRes = await _controller.CreateWallet(new CreateWalletRequest
+        {
+            Name = "Ví USD",
+            Type = 2,
+            InitialBalance = 100m,
+            Currency = "USD"
+        }) as ObjectResult;
+        Assert.NotNull(usdRes);
+        Assert.Equal(201, usdRes.StatusCode);
+
+        // 3. Create VND wallet then PUT XYZ -> 400 UNSUPPORTED_CURRENCY
         var vndRes = await _controller.CreateWallet(new CreateWalletRequest
         {
             Name = "Ví VND",
@@ -450,7 +461,7 @@ public class WalletsControllerTests : IDisposable
         var putRes = await _controller.UpdateWallet(created.Id, new UpdateWalletRequest
         {
             Name = "Ví VND Sửa",
-            Currency = "EUR"
+            Currency = "XYZ"
         }) as BadRequestObjectResult;
 
         Assert.NotNull(putRes);

@@ -23,7 +23,7 @@ public class UserProfileClient : IUserProfileClient
     {
         try
         {
-            var response = await _httpClient.GetAsync($"/api/profile/exchange-rate?base={fromCurrency}&target={toCurrency}", cancellationToken);
+            var response = await _httpClient.GetAsync($"/internal/exchange-rates?base={fromCurrency}&target={toCurrency}", cancellationToken);
             if (!response.IsSuccessStatusCode)
             {
                 return null;

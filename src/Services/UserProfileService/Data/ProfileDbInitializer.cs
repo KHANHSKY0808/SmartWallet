@@ -9,9 +9,9 @@ public static class ProfileDbInitializer
     {
         try
         {
-            await context.Database.MigrateAsync();
+            await context.Database.EnsureCreatedAsync();
             await context.Database.ExecuteSqlRawAsync("PRAGMA journal_mode = WAL;");
-            logger.LogInformation("Applied EF Core Migrations and set SQLite WAL mode for Profile DB");
+            logger.LogInformation("Ensured created and set SQLite WAL mode for Profile DB");
 
             if (!await context.Currencies.AnyAsync())
             {
@@ -26,6 +26,19 @@ public static class ProfileDbInitializer
                 await context.Currencies.AddRangeAsync(currencies);
                 await context.SaveChangesAsync();
                 logger.LogInformation("Seeded default currencies (VND, USD, EUR, JPY)");
+            }
+
+            if (!await context.ExchangeRates.AnyAsync())
+            {
+                var rates = new List<ExchangeRate>
+                {
+                    new() { BaseCurrency = "USD", TargetCurrency = "VND", Rate = 25450m, Source = "Manual", UpdatedAt = DateTime.UtcNow },
+                    new() { BaseCurrency = "EUR", TargetCurrency = "VND", Rate = 27500m, Source = "Manual", UpdatedAt = DateTime.UtcNow }
+                };
+
+                await context.ExchangeRates.AddRangeAsync(rates);
+                await context.SaveChangesAsync();
+                logger.LogInformation("Seeded default exchange rates (USD->VND: 25,450, EUR->VND: 27,500)");
             }
         }
         catch (Exception ex)

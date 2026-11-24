@@ -20,6 +20,9 @@ public class CreateTransactionRequest
 
     [MaxLength(1000, ErrorMessage = "Ghi chú tối đa 1000 ký tự")]
     public string? Note { get; set; }
+
+    public Guid? ReceiptFileId { get; set; }
+    public List<Guid>? TagIds { get; set; }
 }
 
 public class UpdateTransactionRequest
@@ -39,6 +42,9 @@ public class UpdateTransactionRequest
 
     [MaxLength(1000, ErrorMessage = "Ghi chú tối đa 1000 ký tự")]
     public string? Note { get; set; }
+
+    public Guid? ReceiptFileId { get; set; }
+    public List<Guid>? TagIds { get; set; }
 
     [Required(ErrorMessage = "Trường rowVersion là bắt buộc")]
     public Guid? RowVersion { get; set; }
@@ -73,6 +79,7 @@ public class TransactionQueryParameters
     public decimal? MinAmount { get; set; }
     public decimal? MaxAmount { get; set; }
     public string? Keyword { get; set; }
+    public string? TagIds { get; set; }
     public string? SortBy { get; set; } = "transactionDate";
     public string? SortOrder { get; set; } = "desc";
 }
@@ -89,6 +96,9 @@ public class TransactionDto
     public DateTime TransactionDate { get; set; }
     public string? Note { get; set; }
     public string? ReceiptImageUrl { get; set; }
+    public Guid? ReceiptFileId { get; set; }
+    public List<Guid> TagIds { get; set; } = new();
+    public List<TagDto> Tags { get; set; } = new();
     public Guid RowVersion { get; set; }
     public DateTime CreatedAt { get; set; }
     public DateTime UpdatedAt { get; set; }

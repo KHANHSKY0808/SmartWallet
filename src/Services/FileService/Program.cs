@@ -1,6 +1,17 @@
-﻿using SharedKernel.Extensions;
+﻿using Microsoft.EntityFrameworkCore;
+using SharedKernel.Extensions;
+using FileService.Consumers;
+using FileService.Data;
 
 var builder = WebApplication.CreateBuilder(args);
+
+// Cấu hình Database
+builder.Services.AddDbContext<FileDbContext>(options =>
+{
+    var conn = builder.Configuration.GetConnectionString("DefaultConnection") 
+               ?? "Data Source=fileservice.db";
+    options.UseSqlite(conn);
+});
 
 // Cấu hình Controllers
 builder.Services.AddControllers();
@@ -15,7 +26,17 @@ builder.Services.AddJwtAuthentication(builder.Configuration);
 // Cấu hình Consul Service Discovery từ SharedKernel
 builder.Services.AddConsulConfig(builder.Configuration);
 
+// Cấu hình RabbitMQ Consumer
+builder.Services.AddHostedService<TransactionDeletedConsumer>();
+
 var app = builder.Build();
+
+// Tự động migrate / EnsureCreated DB
+using (var scope = app.Services.CreateScope())
+{
+    var db = scope.ServiceProvider.GetRequiredService<FileDbContext>();
+    db.Database.EnsureCreated();
+}
 
 if (app.Environment.IsDevelopment())
 {
@@ -41,3 +62,5 @@ app.UseConsulServiceRegistration(builder.Configuration, app.Lifetime);
 app.MapControllers();
 
 app.Run();
+
+public partial class Program { }

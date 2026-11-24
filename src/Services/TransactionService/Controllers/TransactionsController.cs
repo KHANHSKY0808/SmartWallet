@@ -2,6 +2,7 @@ using System.Security.Claims;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.DependencyInjection;
 using SharedKernel.Events;
 using SharedKernel.Events.EventContracts;
 using SharedKernel.Messaging;
@@ -20,6 +21,7 @@ public class TransactionsController : ControllerBase
     private readonly TransactionDbContext _context;
     private readonly IWalletClient _walletClient;
     private readonly ICategoryClient _categoryClient;
+    private readonly IFileServiceClient? _fileServiceClient;
     private readonly IEventPublisher? _eventPublisher;
     private readonly ILogger<TransactionsController> _logger;
 
@@ -28,12 +30,25 @@ public class TransactionsController : ControllerBase
         IWalletClient walletClient,
         ICategoryClient categoryClient,
         ILogger<TransactionsController> logger,
+        IEventPublisher? eventPublisher)
+        : this(context, walletClient, categoryClient, logger, null, eventPublisher)
+    {
+    }
+
+    [ActivatorUtilitiesConstructor]
+    public TransactionsController(
+        TransactionDbContext context,
+        IWalletClient walletClient,
+        ICategoryClient categoryClient,
+        ILogger<TransactionsController> logger,
+        IFileServiceClient? fileServiceClient,
         IEventPublisher? eventPublisher = null)
     {
         _context = context;
         _walletClient = walletClient;
         _categoryClient = categoryClient;
         _logger = logger;
+        _fileServiceClient = fileServiceClient;
         _eventPublisher = eventPublisher;
     }
 
@@ -84,6 +99,26 @@ public class TransactionsController : ControllerBase
             query = query.Where(t => t.Note != null && t.Note.ToLower().Contains(kw));
         }
 
+        if (!string.IsNullOrWhiteSpace(queryParams.TagIds))
+        {
+            var tagIdStrings = queryParams.TagIds.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+            var parsedTagIds = new List<Guid>();
+            foreach (var s in tagIdStrings)
+            {
+                if (Guid.TryParse(s, out var tagGuid))
+                {
+                    parsedTagIds.Add(tagGuid);
+                }
+            }
+            if (parsedTagIds.Count > 0)
+            {
+                var matchingTxIds = _context.TransactionTags
+                    .Where(tt => parsedTagIds.Contains(tt.TagId))
+                    .Select(tt => tt.TransactionId);
+                query = query.Where(t => matchingTxIds.Contains(t.Id));
+            }
+        }
+
         var totalItems = await query.CountAsync();
 
         // Sắp xếp
@@ -98,9 +133,18 @@ public class TransactionsController : ControllerBase
         var skip = (queryParams.Page - 1) * queryParams.PageSize;
         var items = await query.Skip(skip).Take(queryParams.PageSize).ToListAsync();
 
+        var txIds = items.Select(t => t.Id).ToList();
+        var allTxTags = await _context.TransactionTags
+            .AsNoTracking()
+            .Where(tt => txIds.Contains(tt.TransactionId))
+            .Include(tt => tt.Tag)
+            .ToListAsync();
+        var tagsByTxId = allTxTags.GroupBy(tt => tt.TransactionId)
+            .ToDictionary(g => g.Key, g => g.ToList());
+
         var result = new PagedResult<TransactionDto>
         {
-            Items = items.Select(ToDto).ToList(),
+            Items = items.Select(t => ToDto(t, tagsByTxId.GetValueOrDefault(t.Id))).ToList(),
             TotalItems = totalItems,
             Page = queryParams.Page,
             PageSize = queryParams.PageSize
@@ -121,7 +165,13 @@ public class TransactionsController : ControllerBase
             return NotFound(new { message = "Giao dịch không tồn tại hoặc không thuộc quyền sở hữu" });
         }
 
-        return Ok(ToDto(tx));
+        var tags = await _context.TransactionTags
+            .AsNoTracking()
+            .Where(tt => tt.TransactionId == tx.Id)
+            .Include(tt => tt.Tag)
+            .ToListAsync();
+
+        return Ok(ToDto(tx, tags));
     }
 
     [HttpPost]
@@ -164,6 +214,38 @@ public class TransactionsController : ControllerBase
             categoryParentId = catResult.ParentId;
         }
 
+        if (request.TagIds != null && request.TagIds.Count > 0)
+        {
+            if (request.TagIds.Count > 10)
+            {
+                return BadRequest(new { message = "Mỗi giao dịch tối đa 10 thẻ." });
+            }
+            var distinctTagIds = request.TagIds.Distinct().ToList();
+            var userTagCount = await _context.Tags.CountAsync(t => t.UserId == userId && distinctTagIds.Contains(t.Id));
+            if (userTagCount != distinctTagIds.Count)
+            {
+                return BadRequest(new { message = "Thẻ không tồn tại hoặc không thuộc quyền sở hữu của người dùng." });
+            }
+        }
+
+        if (request.ReceiptFileId.HasValue)
+        {
+            var isAttached = await _context.Transactions.AnyAsync(t => t.ReceiptFileId == request.ReceiptFileId.Value);
+            if (isAttached)
+            {
+                return StatusCode(409, new { code = "RECEIPT_ALREADY_ATTACHED", message = "Hóa đơn đã được gắn cho giao dịch khác." });
+            }
+
+            if (_fileServiceClient != null)
+            {
+                var fileResult = await _fileServiceClient.ValidateFileAsync(request.ReceiptFileId.Value, token);
+                if (!fileResult.Exists || fileResult.OwnerUserId != userId || fileResult.Purpose != 1)
+                {
+                    return BadRequest(new { message = "Hóa đơn không tồn tại, không thuộc quyền sở hữu hoặc không phải là hóa đơn." });
+                }
+            }
+        }
+
         var tx = new Transaction
         {
             UserId = userId,
@@ -173,6 +255,7 @@ public class TransactionsController : ControllerBase
             Amount = request.Amount,
             TransactionDate = request.TransactionDate == default ? DateTime.UtcNow : request.TransactionDate,
             Note = request.Note?.Trim(),
+            ReceiptFileId = request.ReceiptFileId,
             RowVersion = Guid.NewGuid(),
             CreatedAt = DateTime.UtcNow,
             UpdatedAt = DateTime.UtcNow
@@ -183,6 +266,13 @@ public class TransactionsController : ControllerBase
         try
         {
             _context.Transactions.Add(tx);
+            if (request.TagIds != null && request.TagIds.Count > 0)
+            {
+                foreach (var tid in request.TagIds.Distinct())
+                {
+                    _context.TransactionTags.Add(new TransactionTag { TransactionId = tx.Id, TagId = tid });
+                }
+            }
             await _context.SaveChangesAsync();
 
             // Publish sự kiện TransactionCreatedEvent lên RabbitMQ để WalletService cập nhật số dư
@@ -203,7 +293,18 @@ public class TransactionsController : ControllerBase
             }
 
             await dbTx.CommitAsync();
-            return StatusCode(201, ToDto(tx));
+
+            var createdTags = new List<TransactionTag>();
+            if (request.TagIds != null && request.TagIds.Count > 0)
+            {
+                createdTags = await _context.TransactionTags
+                    .AsNoTracking()
+                    .Where(tt => tt.TransactionId == tx.Id)
+                    .Include(tt => tt.Tag)
+                    .ToListAsync();
+            }
+
+            return StatusCode(201, ToDto(tx, createdTags));
         }
         catch (Exception ex)
         {
@@ -262,6 +363,41 @@ public class TransactionsController : ControllerBase
             }
         }
 
+        if (request.TagIds != null)
+        {
+            if (request.TagIds.Count > 10)
+            {
+                return BadRequest(new { message = "Mỗi giao dịch tối đa 10 thẻ." });
+            }
+            var distinctTagIds = request.TagIds.Distinct().ToList();
+            if (distinctTagIds.Count > 0)
+            {
+                var userTagCount = await _context.Tags.CountAsync(t => t.UserId == userId && distinctTagIds.Contains(t.Id));
+                if (userTagCount != distinctTagIds.Count)
+                {
+                    return BadRequest(new { message = "Thẻ không tồn tại hoặc không thuộc quyền sở hữu của người dùng." });
+                }
+            }
+        }
+
+        if (request.ReceiptFileId.HasValue)
+        {
+            var isAttached = await _context.Transactions.AnyAsync(t => t.ReceiptFileId == request.ReceiptFileId.Value && t.Id != id);
+            if (isAttached)
+            {
+                return StatusCode(409, new { code = "RECEIPT_ALREADY_ATTACHED", message = "Một file chỉ gắn 1 giao dịch." });
+            }
+
+            if (_fileServiceClient != null)
+            {
+                var fileResult = await _fileServiceClient.ValidateFileAsync(request.ReceiptFileId.Value, token);
+                if (!fileResult.Exists || fileResult.OwnerUserId != userId || fileResult.Purpose != 1)
+                {
+                    return BadRequest(new { message = "File của user khác hoặc không hợp lệ." });
+                }
+            }
+        }
+
         Guid? oldCategoryParentId = null;
         if (tx.CategoryId.HasValue)
         {
@@ -314,8 +450,22 @@ public class TransactionsController : ControllerBase
             tx.Amount = request.Amount;
             tx.TransactionDate = request.TransactionDate == default ? tx.TransactionDate : request.TransactionDate;
             tx.Note = request.Note?.Trim();
+            if (request.ReceiptFileId.HasValue)
+            {
+                tx.ReceiptFileId = request.ReceiptFileId.Value;
+            }
             tx.RowVersion = Guid.NewGuid();
             tx.UpdatedAt = DateTime.UtcNow;
+
+            if (request.TagIds != null)
+            {
+                var existingTags = await _context.TransactionTags.Where(tt => tt.TransactionId == tx.Id).ToListAsync();
+                _context.TransactionTags.RemoveRange(existingTags);
+                foreach (var tid in request.TagIds.Distinct())
+                {
+                    _context.TransactionTags.Add(new TransactionTag { TransactionId = tx.Id, TagId = tid });
+                }
+            }
 
             await _context.SaveChangesAsync();
 
@@ -341,7 +491,14 @@ public class TransactionsController : ControllerBase
             }
 
             await dbTx.CommitAsync();
-            return Ok(ToDto(tx));
+
+            var updatedTags = await _context.TransactionTags
+                .AsNoTracking()
+                .Where(tt => tt.TransactionId == tx.Id)
+                .Include(tt => tt.Tag)
+                .ToListAsync();
+
+            return Ok(ToDto(tx, updatedTags));
         }
         catch (DbUpdateConcurrencyException)
         {
@@ -401,7 +558,8 @@ public class TransactionsController : ControllerBase
                     CategoryId = tx.CategoryId ?? Guid.Empty,
                     CategoryParentId = categoryParentId,
                     Type = (int)tx.Type,
-                    Amount = tx.Amount
+                    Amount = tx.Amount,
+                    ReceiptFileId = tx.ReceiptFileId
                 }, "transaction.deleted");
             }
 
@@ -507,9 +665,9 @@ public class TransactionsController : ControllerBase
         return Request.Headers.Authorization.FirstOrDefault();
     }
 
-    private static TransactionDto ToDto(Transaction tx)
+    private static TransactionDto ToDto(Transaction tx, List<TransactionTag>? tags = null)
     {
-        return new TransactionDto
+        var dto = new TransactionDto
         {
             Id = tx.Id,
             UserId = tx.UserId,
@@ -527,10 +685,26 @@ public class TransactionsController : ControllerBase
             TransactionDate = tx.TransactionDate,
             Note = tx.Note,
             ReceiptImageUrl = tx.ReceiptImageUrl,
+            ReceiptFileId = tx.ReceiptFileId,
             RowVersion = tx.RowVersion,
             CreatedAt = tx.CreatedAt,
             UpdatedAt = tx.UpdatedAt
         };
+
+        if (tags != null)
+        {
+            dto.TagIds = tags.Select(t => t.TagId).ToList();
+            dto.Tags = tags.Where(t => t.Tag != null).Select(t => new TagDto
+            {
+                Id = t.Tag!.Id,
+                UserId = t.Tag.UserId,
+                Name = t.Tag.Name,
+                Color = t.Tag.Color,
+                CreatedAt = t.Tag.CreatedAt
+            }).ToList();
+        }
+
+        return dto;
     }
 }
 

@@ -21,8 +21,9 @@ builder.Services.AddDbContext<NotificationDbContext>(options =>
     options.UseSqlite(connectionString);
 });
 
-// Đăng ký Consumer thông báo ngân sách
+// Đăng ký Consumer thông báo ngân sách và mục tiêu hoàn thành
 builder.Services.AddHostedService<BudgetThresholdReachedConsumer>();
+builder.Services.AddHostedService<GoalCompletedConsumer>();
 
 // Khai báo topology queue thông báo
 try
@@ -32,6 +33,7 @@ try
     using var conn = factory.CreateConnection();
     using var ch = conn.CreateModel();
     RabbitMqTopology.DeclareConsumerQueue(ch, "notification.budget-threshold", "budget.threshold_reached");
+    RabbitMqTopology.DeclareConsumerQueue(ch, "notification.goal-completed", "goal.completed");
 }
 catch (Exception)
 {

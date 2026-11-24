@@ -37,13 +37,22 @@ builder.Services.AddHttpClient<ICategoryClient, CategoryClient>(client =>
     client.Timeout = TimeSpan.FromSeconds(3);
 });
 
+builder.Services.AddHttpClient<IFileServiceClient, FileServiceClient>(client =>
+{
+    var url = builder.Configuration["Services:FileService:Url"] ?? "http://localhost:8012";
+    client.BaseAddress = new Uri(url);
+    client.Timeout = TimeSpan.FromSeconds(3);
+});
+
 // RabbitMQ Event Publisher
 builder.Services.AddSingleton<IEventPublisher, RabbitMqEventPublisher>();
 
-// Đăng ký RabbitMQ Consumer cho sự kiện MoneyTransferred (FIN-34b)
+// Đăng ký RabbitMQ Consumers
 builder.Services.AddHostedService<MoneyTransferredConsumer>();
+builder.Services.AddHostedService<GoalFundsDepositedConsumer>();
+builder.Services.AddHostedService<GoalFundsWithdrawnConsumer>();
 
-// Khai báo topology queue transaction.money-transferred
+// Khai báo topology queue transaction.money-transferred và các queue goal
 try
 {
     var rmqHost = builder.Configuration["RabbitMQ:Host"] ?? "localhost";
@@ -51,6 +60,8 @@ try
     using var conn = factory.CreateConnection();
     using var ch = conn.CreateModel();
     RabbitMqTopology.DeclareConsumerQueue(ch, "transaction.money-transferred", "wallet.transferred");
+    RabbitMqTopology.DeclareConsumerQueue(ch, "transaction.goal-deposited", "goal.funds_deposited");
+    RabbitMqTopology.DeclareConsumerQueue(ch, "transaction.goal-withdrawn", "goal.funds_withdrawn");
 }
 catch (Exception)
 {

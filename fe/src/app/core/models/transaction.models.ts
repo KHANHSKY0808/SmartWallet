@@ -4,6 +4,14 @@ export enum TransactionType {
   Transfer = 3
 }
 
+export interface TagDto {
+  id: string;
+  userId?: string;
+  name: string;
+  color?: string | null;
+  createdAt?: string;
+}
+
 export interface TransactionDto {
   id: string;
   userId: string;
@@ -15,6 +23,9 @@ export interface TransactionDto {
   transactionDate: string;
   note?: string | null;
   receiptImageUrl?: string | null;
+  receiptFileId?: string | null;
+  tagIds?: string[];
+  tags?: TagDto[];
   transferId?: string | null;
   rowVersion: string;
   createdAt: string;
@@ -28,6 +39,8 @@ export interface CreateTransactionRequest {
   amount: number;
   transactionDate?: string;
   note?: string | null;
+  receiptFileId?: string | null;
+  tagIds?: string[];
 }
 
 export interface UpdateTransactionRequest {
@@ -37,6 +50,8 @@ export interface UpdateTransactionRequest {
   amount: number;
   transactionDate: string;
   note?: string | null;
+  receiptFileId?: string | null;
+  tagIds?: string[];
   rowVersion?: string | null;
 }
 
@@ -51,6 +66,7 @@ export interface TransactionQueryParameters {
   minAmount?: number;
   maxAmount?: number;
   keyword?: string;
+  tagIds?: string;
   sortBy?: string;
   sortOrder?: string;
 }
@@ -62,4 +78,3 @@ export interface PagedResult<T> {
   pageSize: number;
   totalPages: number;
 }
-

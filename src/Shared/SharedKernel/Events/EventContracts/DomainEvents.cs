@@ -47,6 +47,7 @@ public record TransactionDeletedEvent : IntegrationEvent
     public Guid? CategoryParentId { get; init; }
     public int Type { get; init; }
     public decimal Amount { get; init; }
+    public Guid? ReceiptFileId { get; init; }
 }
 
 public record BudgetThresholdReachedEvent : IntegrationEvent
@@ -74,4 +75,32 @@ public record MoneyTransferredEvent : IntegrationEvent
     public decimal Fee { get; init; }
     public string? Note { get; init; }
 }
+
+public record GoalFundsDepositedEvent : IntegrationEvent
+{
+    public Guid GoalId { get; init; }
+    public Guid WalletId { get; init; }
+    public Guid UserId { get; init; }
+    public decimal Amount { get; init; }
+    public string? GoalName { get; init; }
+}
+
+public record GoalFundsWithdrawnEvent : IntegrationEvent
+{
+    public Guid GoalId { get; init; }
+    public Guid WalletId { get; init; }
+    public Guid UserId { get; init; }
+    public decimal Amount { get; init; }
+    public string? GoalName { get; init; }
+}
+
+public record GoalCompletedEvent : IntegrationEvent
+{
+    public Guid GoalId { get; init; }
+    public Guid UserId { get; init; }
+    public string GoalName { get; init; } = string.Empty;
+    public decimal TargetAmount { get; init; }
+    public decimal CurrentAmount { get; init; }
+}
+
 

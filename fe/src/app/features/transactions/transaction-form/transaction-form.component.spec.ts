@@ -16,6 +16,9 @@ describe('TransactionFormComponent', () => {
     getTransaction: ReturnType<typeof vi.fn>;
     createTransaction: ReturnType<typeof vi.fn>;
     updateTransaction: ReturnType<typeof vi.fn>;
+    uploadReceipt: ReturnType<typeof vi.fn>;
+    getTags: ReturnType<typeof vi.fn>;
+    createTag: ReturnType<typeof vi.fn>;
   };
   let walletServiceMock: {
     getWallets: ReturnType<typeof vi.fn>;
@@ -69,7 +72,10 @@ describe('TransactionFormComponent', () => {
     transactionServiceMock = {
       getTransaction: vi.fn(),
       createTransaction: vi.fn().mockReturnValue(of({ id: 'tx1', amount: 50000 })),
-      updateTransaction: vi.fn().mockReturnValue(of({ id: 'tx1', amount: 70000 }))
+      updateTransaction: vi.fn().mockReturnValue(of({ id: 'tx1', amount: 70000 })),
+      uploadReceipt: vi.fn().mockReturnValue(of({ id: 'f-rec-1' })),
+      getTags: vi.fn().mockReturnValue(of([{ id: 't1', name: 'Công tác' }])),
+      createTag: vi.fn().mockImplementation((name) => of({ id: 't-new', name }))
     };
 
     walletServiceMock = {
@@ -154,5 +160,59 @@ describe('TransactionFormComponent', () => {
     component.onSubmit();
 
     expect(component.errorMessage()).toContain('phiên làm việc khác');
+  });
+
+  it('F-04: should reject receipt files larger than 5MB immediately at client without upload call', () => {
+    fixture = TestBed.createComponent(TransactionFormComponent);
+    component = fixture.componentInstance;
+    fixture.detectChanges();
+
+    const largeFile = new File([new ArrayBuffer(5 * 1024 * 1024 + 100)], 'large.png', { type: 'image/png' });
+    component.handleReceiptFile(largeFile);
+
+    expect(component.receiptError()).toContain('5MB');
+    expect(component.receiptFileId()).toBeNull();
+    expect(transactionServiceMock.uploadReceipt).not.toHaveBeenCalled();
+  });
+
+  it('F-05: should limit tags to maximum 10 and support inline tag creation', () => {
+    fixture = TestBed.createComponent(TransactionFormComponent);
+    component = fixture.componentInstance;
+    fixture.detectChanges();
+
+    // Set 10 selected tags
+    const tenTags = Array.from({ length: 10 }, (_, i) => `tag-${i}`);
+    component.selectedTagIds.set(tenTags);
+
+    // Try to toggle an 11th tag
+    component.toggleTag('tag-11');
+    expect(component.tagError()).toContain('Tối đa 10 thẻ');
+    expect(component.selectedTagIds().length).toBe(10);
+
+    // Try inline add
+    component.newTagName.set('Tag mới');
+    component.addInlineTag();
+    expect(transactionServiceMock.createTag).not.toHaveBeenCalled();
+
+    // Remove one tag and add new inline tag
+    component.toggleTag('tag-0'); // deselect
+    expect(component.selectedTagIds().length).toBe(9);
+
+    component.newTagName.set('Tag mới');
+    component.addInlineTag();
+    expect(transactionServiceMock.createTag).toHaveBeenCalledWith('Tag mới');
+    expect(component.selectedTagIds()).toContain('t-new');
+  });
+
+  it('F-06: should be responsive without horizontal overflow', () => {
+    fixture = TestBed.createComponent(TransactionFormComponent);
+    component = fixture.componentInstance;
+    fixture.detectChanges();
+
+    const compiled = fixture.nativeElement as HTMLElement;
+    const container = compiled.querySelector('.transaction-form-container') as HTMLElement;
+    expect(container).toBeTruthy();
+    expect(container.style.maxWidth).toBe('100%');
+    expect(container.style.overflowX).toBe('hidden');
   });
 });

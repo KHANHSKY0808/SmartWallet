@@ -83,6 +83,11 @@ export const routes: Routes = [
     loadComponent: () => import('./features/budgets/budget-form/budget-form.component').then(m => m.BudgetFormComponent)
   },
   {
+    path: 'savings',
+    canActivate: [authGuard],
+    loadComponent: () => import('./features/savings/saving-goal-list/saving-goal-list.component').then(m => m.SavingGoalListComponent)
+  },
+  {
     path: '**',
     redirectTo: 'wallets'
   }

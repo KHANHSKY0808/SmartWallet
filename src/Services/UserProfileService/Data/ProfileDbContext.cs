@@ -11,6 +11,8 @@ public class ProfileDbContext : DbContext
 
     public DbSet<UserProfile> UserProfiles => Set<UserProfile>();
     public DbSet<Currency> Currencies => Set<Currency>();
+    public DbSet<ExchangeRate> ExchangeRates => Set<ExchangeRate>();
+    public DbSet<ExchangeRateHistory> ExchangeRateHistories => Set<ExchangeRateHistory>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
@@ -34,6 +36,27 @@ public class ProfileDbContext : DbContext
             entity.Property(e => e.Name).IsRequired().HasMaxLength(50);
             entity.Property(e => e.Symbol).IsRequired().HasMaxLength(5);
             entity.Property(e => e.IsActive).HasDefaultValue(true);
+        });
+
+        modelBuilder.Entity<ExchangeRate>(entity =>
+        {
+            entity.ToTable("ExchangeRates");
+            entity.HasKey(e => e.Id);
+            entity.Property(e => e.BaseCurrency).IsRequired().HasMaxLength(10);
+            entity.Property(e => e.TargetCurrency).IsRequired().HasMaxLength(10);
+            entity.Property(e => e.Rate).HasColumnType("decimal(18,6)").IsRequired();
+            entity.Property(e => e.Source).HasMaxLength(30).HasDefaultValue("Manual");
+            entity.HasIndex(e => new { e.BaseCurrency, e.TargetCurrency }).IsUnique();
+        });
+
+        modelBuilder.Entity<ExchangeRateHistory>(entity =>
+        {
+            entity.ToTable("ExchangeRateHistories");
+            entity.HasKey(e => e.Id);
+            entity.Property(e => e.BaseCurrency).IsRequired().HasMaxLength(10);
+            entity.Property(e => e.TargetCurrency).IsRequired().HasMaxLength(10);
+            entity.Property(e => e.OldRate).HasColumnType("decimal(18,6)");
+            entity.Property(e => e.NewRate).HasColumnType("decimal(18,6)").IsRequired();
         });
     }
 }

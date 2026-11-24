@@ -35,6 +35,8 @@ public class Transaction
     [MaxLength(500)]
     public string? ReceiptImageUrl { get; set; }
 
+    public Guid? ReceiptFileId { get; set; }
+
     /// <summary>
     /// Lưu TransferId khi giao dịch được tạo tự động từ sự kiện MoneyTransferred (Type = 3)
     /// Dùng để đảm bảo tính Idempotent (D2, FIN-34b)

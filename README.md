@@ -146,6 +146,9 @@ Bạn có thể chọn 1 trong 2 cách sau:
 
 🔹 Cách A: Khởi động nhanh toàn bộ 13 services (Khuyên dùng)
 
+khởi động getway trước tiên
+ dotnet run --project src/Gateway/ApiGateway.Yarp
+ 
 Mở một cửa sổ PowerShell mới tại thư mục SmartWallet và dán lệnh sau để tự động bật Gateway và tất cả 12 microservices:
 
 powershell
