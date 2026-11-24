@@ -2,6 +2,7 @@ export interface BudgetDto {
   id: string;
   userId: string;
   categoryId: string;
+  categoryName?: string;
   amount: number;
   month: number;
   year: number;

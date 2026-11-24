@@ -126,6 +126,7 @@ public class BudgetsControllerTests : IDisposable
         var created = Assert.IsType<ObjectResult>(result);
         Assert.Equal(201, created.StatusCode);
         var dto = Assert.IsType<BudgetDto>(created.Value);
+        Assert.Equal("Ăn uống", dto.CategoryName);
         Assert.Equal(0, dto.CurrentSpent);
         Assert.Equal(0, dto.Percent);
         Assert.Equal("normal", dto.Status);
@@ -353,6 +354,7 @@ public class BudgetsControllerTests : IDisposable
         Assert.Single(_eventPublisher.PublishedEvents);
         var alert = Assert.IsType<BudgetThresholdReachedEvent>(_eventPublisher.PublishedEvents[0].Event);
         Assert.Equal(80, alert.Percent);
+        Assert.Equal("Ăn uống", alert.CategoryName);
     }
 
     [Fact]
@@ -411,6 +413,7 @@ public class BudgetsControllerTests : IDisposable
         {
             UserId = _userId,
             CategoryId = Guid.NewGuid(),
+            CategoryName = "Ăn uống",
             Amount = 2000000m,
             Month = 11,
             Year = 2026,
@@ -429,6 +432,7 @@ public class BudgetsControllerTests : IDisposable
         Assert.Single(_eventPublisher.PublishedEvents);
         var alert = Assert.IsType<BudgetThresholdReachedEvent>(_eventPublisher.PublishedEvents[0].Event);
         Assert.Equal(80, alert.Percent);
+        Assert.Equal("Ăn uống", alert.CategoryName);
     }
 
     [Fact]

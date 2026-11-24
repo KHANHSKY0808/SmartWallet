@@ -20,6 +20,9 @@ public class BudgetDbContext : DbContext
         {
             entity.HasKey(e => e.Id);
 
+            entity.Property(e => e.CategoryName)
+                .HasMaxLength(100);
+
             // D31, FIN-65: Unique (UserId, CategoryId, Month, Year)
             entity.HasIndex(e => new { e.UserId, e.CategoryId, e.Month, e.Year })
                 .IsUnique()

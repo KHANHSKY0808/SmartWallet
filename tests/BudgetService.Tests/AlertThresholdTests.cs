@@ -46,6 +46,7 @@ public class AlertThresholdTests : IDisposable
         {
             UserId = _userId,
             CategoryId = categoryId,
+            CategoryName = "Ăn uống",
             Amount = 2000000m,
             Month = 11,
             Year = 2026,
@@ -77,6 +78,8 @@ public class AlertThresholdTests : IDisposable
 
         var alert = Assert.IsType<BudgetThresholdReachedEvent>(_eventPublisher.PublishedEvents[0].Event);
         Assert.Equal(80, alert.Percent);
+        Assert.Equal("Ăn uống", alert.CategoryName);
+        Assert.Equal("Ăn uống", alert.CategoryName);
         Assert.Equal(1600000m, alert.CurrentSpent);
         Assert.Equal(2000000m, alert.BudgetLimit);
     }
@@ -89,6 +92,7 @@ public class AlertThresholdTests : IDisposable
         {
             UserId = _userId,
             CategoryId = categoryId,
+            CategoryName = "Ăn uống",
             Amount = 2000000m,
             Month = 11,
             Year = 2026,
@@ -129,6 +133,8 @@ public class AlertThresholdTests : IDisposable
 
         var alert = Assert.IsType<BudgetThresholdReachedEvent>(_eventPublisher.PublishedEvents[0].Event);
         Assert.Equal(100, alert.Percent);
+        Assert.Equal("Ăn uống", alert.CategoryName);
+        Assert.Equal("Ăn uống", alert.CategoryName);
         Assert.Equal(2100000m, alert.CurrentSpent);
     }
 
@@ -140,6 +146,7 @@ public class AlertThresholdTests : IDisposable
         {
             UserId = _userId,
             CategoryId = categoryId,
+            CategoryName = "Ăn uống",
             Amount = 2000000m,
             Month = 11,
             Year = 2026,
@@ -186,6 +193,7 @@ public class AlertThresholdTests : IDisposable
         {
             UserId = _userId,
             CategoryId = categoryId,
+            CategoryName = "Ăn uống",
             Amount = 2000000m,
             Month = 11,
             Year = 2026,
@@ -227,6 +235,7 @@ public class AlertThresholdTests : IDisposable
 
         var alert = Assert.IsType<BudgetThresholdReachedEvent>(_eventPublisher.PublishedEvents[0].Event);
         Assert.Equal(100, alert.Percent);
+        Assert.Equal("Ăn uống", alert.CategoryName);
     }
 
     [Fact]
@@ -237,6 +246,7 @@ public class AlertThresholdTests : IDisposable
         {
             UserId = _userId,
             CategoryId = categoryId,
+            CategoryName = "Ăn uống",
             Amount = 2000000m,
             Month = 11,
             Year = 2026,
@@ -301,6 +311,7 @@ public class AlertThresholdTests : IDisposable
 
         var alert = Assert.IsType<BudgetThresholdReachedEvent>(_eventPublisher.PublishedEvents[0].Event);
         Assert.Equal(80, alert.Percent);
+        Assert.Equal("Ăn uống", alert.CategoryName);
     }
 
     [Fact]
@@ -311,6 +322,7 @@ public class AlertThresholdTests : IDisposable
         {
             UserId = _userId,
             CategoryId = categoryId,
+            CategoryName = "Ăn uống",
             Amount = 2000000m,
             Month = 11,
             Year = 2026,
@@ -365,6 +377,7 @@ public class AlertThresholdTests : IDisposable
         {
             UserId = _userId,
             CategoryId = categoryId,
+            CategoryName = "Ăn uống",
             Amount = 2000000m,
             Month = 11,
             Year = 2026,
@@ -404,6 +417,7 @@ public class AlertThresholdTests : IDisposable
         {
             UserId = _userId,
             CategoryId = categoryId,
+            CategoryName = "Ăn uống",
             Amount = 2000000m,
             Month = 11,
             Year = 2026,
@@ -430,6 +444,7 @@ public class AlertThresholdTests : IDisposable
         Assert.Equal(budget.Id, alert.BudgetId);
         Assert.Equal(_userId, alert.UserId);
         Assert.Equal(categoryId, alert.CategoryId);
+        Assert.Equal("Ăn uống", alert.CategoryName);
         Assert.Equal(80, alert.Percent);
         Assert.Equal(1600000m, alert.CurrentSpent);
         Assert.Equal(2000000m, alert.BudgetLimit);

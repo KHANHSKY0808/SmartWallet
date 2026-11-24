@@ -14,6 +14,9 @@ public class Budget
     [Required]
     public Guid CategoryId { get; set; }
 
+    [MaxLength(100)]
+    public string? CategoryName { get; set; }
+
     [Required]
     [Column(TypeName = "decimal(18,2)")]
     public decimal Amount { get; set; }

@@ -58,7 +58,7 @@ import { CategoryDto } from '../../../core/models/category.models';
               </span>
               <div>
                 <h4 style="margin: 0; font-size: 1.1rem; color: #0f172a; font-weight: 600;">
-                  {{ getCategoryName(b.categoryId) }}
+                  {{ b.categoryName || getCategoryName(b.categoryId) }}
                 </h4>
                 <span [style.background]="getStatusBadgeBg(b.percent)"
                       [style.color]="getStatusBadgeColor(b.percent)"
