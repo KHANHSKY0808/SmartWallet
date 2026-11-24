@@ -2,11 +2,12 @@ import { Component, inject } from '@angular/core';
 import { CommonModule } from '@angular/common';
 import { Router, RouterModule, RouterOutlet } from '@angular/router';
 import { AuthService } from './core/services/auth.service';
+import { NotificationBellComponent } from './shared/components/notification-bell/notification-bell.component';
 
 @Component({
   selector: 'app-root',
   standalone: true,
-  imports: [CommonModule, RouterOutlet, RouterModule],
+  imports: [CommonModule, RouterOutlet, RouterModule, NotificationBellComponent],
   templateUrl: './app.html',
   styleUrl: './app.scss'
 })

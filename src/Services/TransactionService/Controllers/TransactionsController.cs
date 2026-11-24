@@ -147,6 +147,7 @@ public class TransactionsController : ControllerBase
         }
 
         // Kiểm tra Category nếu được truyền
+        Guid? categoryParentId = null;
         if (request.CategoryId.HasValue)
         {
             var catResult = await _categoryClient.ValidateCategoryAsync(request.CategoryId.Value, token);
@@ -159,6 +160,8 @@ public class TransactionsController : ControllerBase
             {
                 return BadRequest(new { message = "Loại danh mục không khớp với loại giao dịch (Thu/Chi)" });
             }
+
+            categoryParentId = catResult.ParentId;
         }
 
         var tx = new Transaction
@@ -191,6 +194,7 @@ public class TransactionsController : ControllerBase
                     UserId = tx.UserId,
                     WalletId = tx.WalletId,
                     CategoryId = tx.CategoryId ?? Guid.Empty,
+                    CategoryParentId = categoryParentId,
                     Type = (int)tx.Type,
                     Amount = tx.Amount,
                     TransactionDate = tx.TransactionDate,
@@ -258,18 +262,38 @@ public class TransactionsController : ControllerBase
             }
         }
 
-        // Validate danh mục nếu có
-        if (request.CategoryId.HasValue && request.CategoryId != tx.CategoryId)
+        Guid? oldCategoryParentId = null;
+        if (tx.CategoryId.HasValue)
         {
-            var catResult = await _categoryClient.ValidateCategoryAsync(request.CategoryId.Value, token);
-            if (!catResult.Exists)
+            var oldCatResult = await _categoryClient.ValidateCategoryAsync(tx.CategoryId.Value, token);
+            if (oldCatResult.Exists)
             {
-                return BadRequest(new { message = "Danh mục không tồn tại hoặc không thuộc quyền sở hữu" });
+                oldCategoryParentId = oldCatResult.ParentId;
             }
+        }
 
-            if (catResult.Type.HasValue && catResult.Type.Value != request.Type)
+        Guid? newCategoryParentId = null;
+        // Validate danh mục nếu có
+        if (request.CategoryId.HasValue)
+        {
+            if (request.CategoryId == tx.CategoryId)
             {
-                return BadRequest(new { message = "Loại danh mục không khớp với loại giao dịch (Thu/Chi)" });
+                newCategoryParentId = oldCategoryParentId;
+            }
+            else
+            {
+                var catResult = await _categoryClient.ValidateCategoryAsync(request.CategoryId.Value, token);
+                if (!catResult.Exists)
+                {
+                    return BadRequest(new { message = "Danh mục không tồn tại hoặc không thuộc quyền sở hữu" });
+                }
+
+                if (catResult.Type.HasValue && catResult.Type.Value != request.Type)
+                {
+                    return BadRequest(new { message = "Loại danh mục không khớp với loại giao dịch (Thu/Chi)" });
+                }
+
+                newCategoryParentId = catResult.ParentId;
             }
         }
 
@@ -306,6 +330,8 @@ public class TransactionsController : ControllerBase
                     NewWalletId = tx.WalletId,
                     OldCategoryId = oldCategoryId,
                     NewCategoryId = tx.CategoryId ?? Guid.Empty,
+                    OldCategoryParentId = oldCategoryParentId,
+                    NewCategoryParentId = newCategoryParentId,
                     OldType = oldType,
                     NewType = (int)tx.Type,
                     OldAmount = oldAmount,
@@ -347,6 +373,17 @@ public class TransactionsController : ControllerBase
         }
 
         // D30: Mở DB transaction, xóa, publish có publisher confirm, rồi commit. Publish lỗi thì rollback và trả 503 EVENT_PUBLISH_FAILED
+        Guid? categoryParentId = null;
+        if (tx.CategoryId.HasValue)
+        {
+            var token = GetBearerToken();
+            var catResult = await _categoryClient.ValidateCategoryAsync(tx.CategoryId.Value, token);
+            if (catResult.Exists)
+            {
+                categoryParentId = catResult.ParentId;
+            }
+        }
+
         using var dbTx = await _context.Database.BeginTransactionAsync();
         try
         {
@@ -362,6 +399,7 @@ public class TransactionsController : ControllerBase
                     UserId = tx.UserId,
                     WalletId = tx.WalletId,
                     CategoryId = tx.CategoryId ?? Guid.Empty,
+                    CategoryParentId = categoryParentId,
                     Type = (int)tx.Type,
                     Amount = tx.Amount
                 }, "transaction.deleted");
@@ -413,15 +451,49 @@ public class TransactionsController : ControllerBase
             }
         }
 
-        foreach (var tx in affectedTransactions)
-        {
-            tx.CategoryId = request.ReplacementCategoryId;
-            tx.UpdatedAt = DateTime.UtcNow;
-            tx.RowVersion = Guid.NewGuid();
-        }
+        var oldCatResult = await _categoryClient.ValidateCategoryAsync(request.OldCategoryId, token);
 
-        var count = await _context.SaveChangesAsync();
-        return Ok(new { message = $"Đã chuyển {affectedTransactions.Count} giao dịch sang danh mục mới", count = affectedTransactions.Count });
+        // D30/D38: Mở DB transaction, cập nhật, publish TransactionUpdatedEvent cho từng giao dịch, commit
+        using var dbTx = await _context.Database.BeginTransactionAsync();
+        try
+        {
+            foreach (var tx in affectedTransactions)
+            {
+                tx.CategoryId = request.ReplacementCategoryId;
+                tx.UpdatedAt = DateTime.UtcNow;
+                tx.RowVersion = Guid.NewGuid();
+
+                if (_eventPublisher != null)
+                {
+                    await _eventPublisher.PublishAsync(new TransactionUpdatedEvent
+                    {
+                        TransactionId = tx.Id,
+                        UserId = tx.UserId,
+                        OldWalletId = tx.WalletId,
+                        NewWalletId = tx.WalletId,
+                        OldCategoryId = request.OldCategoryId,
+                        NewCategoryId = request.ReplacementCategoryId,
+                        OldCategoryParentId = oldCatResult.Exists ? oldCatResult.ParentId : null,
+                        NewCategoryParentId = replacementResult.ParentId,
+                        OldType = (int)tx.Type,
+                        NewType = (int)tx.Type,
+                        OldAmount = tx.Amount,
+                        NewAmount = tx.Amount,
+                        TransactionDate = tx.TransactionDate
+                    }, "transaction.updated");
+                }
+            }
+
+            var count = await _context.SaveChangesAsync();
+            await dbTx.CommitAsync();
+            return Ok(new { message = $"Đã chuyển {affectedTransactions.Count} giao dịch sang danh mục mới", count = affectedTransactions.Count });
+        }
+        catch (Exception ex)
+        {
+            await dbTx.RollbackAsync();
+            _logger.LogError(ex, "Lỗi khi chuyển giao dịch hoặc publish TransactionUpdatedEvent cho danh mục thay thế, đã rollback DB transaction");
+            return StatusCode(503, new { code = "EVENT_PUBLISH_FAILED", message = "Không thể publish sự kiện lên message broker, thao tác đã được rollback." });
+        }
     }
 
     private Guid GetCurrentUserId()

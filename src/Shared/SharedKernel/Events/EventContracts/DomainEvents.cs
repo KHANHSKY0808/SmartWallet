@@ -14,6 +14,7 @@ public record TransactionCreatedEvent : IntegrationEvent
     public Guid UserId { get; init; }
     public Guid WalletId { get; init; }
     public Guid CategoryId { get; init; }
+    public Guid? CategoryParentId { get; init; }
     public int Type { get; init; } // 1: Expense, 2: Income, 3: Transfer
     public decimal Amount { get; init; }
     public DateTime TransactionDate { get; init; }
@@ -28,6 +29,8 @@ public record TransactionUpdatedEvent : IntegrationEvent
     public Guid NewWalletId { get; init; }
     public Guid OldCategoryId { get; init; }
     public Guid NewCategoryId { get; init; }
+    public Guid? OldCategoryParentId { get; init; }
+    public Guid? NewCategoryParentId { get; init; }
     public int OldType { get; init; }
     public int NewType { get; init; }
     public decimal OldAmount { get; init; }
@@ -41,6 +44,7 @@ public record TransactionDeletedEvent : IntegrationEvent
     public Guid UserId { get; init; }
     public Guid WalletId { get; init; }
     public Guid CategoryId { get; init; }
+    public Guid? CategoryParentId { get; init; }
     public int Type { get; init; }
     public decimal Amount { get; init; }
 }

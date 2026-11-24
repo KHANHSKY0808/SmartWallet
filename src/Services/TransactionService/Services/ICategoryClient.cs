@@ -2,7 +2,7 @@ using System.Text.Json;
 
 namespace TransactionService.Services;
 
-public record CategoryValidationResult(bool Exists, int? Type);
+public record CategoryValidationResult(bool Exists, int? Type, Guid? ParentId = null);
 
 public interface ICategoryClient
 {
@@ -38,12 +38,22 @@ public class CategoryClient : ICategoryClient
 
             var json = await response.Content.ReadAsStringAsync(cancellationToken);
             using var doc = JsonDocument.Parse(json);
+            int? type = null;
             if (doc.RootElement.TryGetProperty("type", out var typeProp))
             {
-                return new CategoryValidationResult(true, typeProp.GetInt32());
+                type = typeProp.GetInt32();
             }
 
-            return new CategoryValidationResult(true, null);
+            Guid? parentId = null;
+            if (doc.RootElement.TryGetProperty("parentId", out var parentProp) && parentProp.ValueKind == JsonValueKind.String)
+            {
+                if (Guid.TryParse(parentProp.GetString(), out var parsedParentId))
+                {
+                    parentId = parsedParentId;
+                }
+            }
+
+            return new CategoryValidationResult(true, type, parentId);
         }
         catch (Exception ex)
         {

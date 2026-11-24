@@ -68,6 +68,21 @@ export const routes: Routes = [
     loadComponent: () => import('./features/transactions/transaction-form/transaction-form.component').then(m => m.TransactionFormComponent)
   },
   {
+    path: 'budgets',
+    canActivate: [authGuard],
+    loadComponent: () => import('./features/budgets/budget-list/budget-list.component').then(m => m.BudgetListComponent)
+  },
+  {
+    path: 'budgets/create',
+    canActivate: [authGuard],
+    loadComponent: () => import('./features/budgets/budget-form/budget-form.component').then(m => m.BudgetFormComponent)
+  },
+  {
+    path: 'budgets/edit/:id',
+    canActivate: [authGuard],
+    loadComponent: () => import('./features/budgets/budget-form/budget-form.component').then(m => m.BudgetFormComponent)
+  },
+  {
     path: '**',
     redirectTo: 'wallets'
   }

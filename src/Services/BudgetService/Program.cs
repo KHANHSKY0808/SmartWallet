@@ -1,4 +1,9 @@
-﻿using SharedKernel.Extensions;
+using Microsoft.EntityFrameworkCore;
+using SharedKernel.Extensions;
+using SharedKernel.Messaging;
+using BudgetService.Consumers;
+using BudgetService.Data;
+using BudgetService.Services;
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -9,6 +14,55 @@ builder.Services.AddEndpointsApiExplorer();
 // Cấu hình Swagger
 builder.Services.AddSwaggerGen();
 
+// Cấu hình Database SQLite
+var connectionString = builder.Configuration.GetConnectionString("DefaultConnection") 
+    ?? "Data Source=../../../database/budget.db;Cache=Shared";
+builder.Services.AddDbContext<BudgetDbContext>(options =>
+{
+    options.UseSqlite(connectionString);
+});
+
+// Đăng ký Ledger Service
+builder.Services.AddScoped<IBudgetLedgerService, BudgetLedgerService>();
+
+// Đăng ký HTTP Clients gọi CategoryService và TransactionService với Timeout và Polly
+builder.Services.AddHttpClient<ICategoryClient, CategoryClient>(client =>
+{
+    var url = builder.Configuration["Services:CategoryService:Url"] ?? "http://localhost:8005";
+    client.BaseAddress = new Uri(url);
+    client.Timeout = TimeSpan.FromSeconds(3); // D8: timeout 3s
+});
+
+builder.Services.AddHttpClient<ITransactionClient, TransactionClient>(client =>
+{
+    var url = builder.Configuration["Services:TransactionService:Url"] ?? "http://localhost:8004";
+    client.BaseAddress = new Uri(url);
+    client.Timeout = TimeSpan.FromSeconds(5);
+});
+
+builder.Services.AddSingleton<IEventPublisher, RabbitMqEventPublisher>();
+
+// Đăng ký RabbitMQ Consumers cho các sự kiện giao dịch
+builder.Services.AddHostedService<TransactionCreatedConsumer>();
+builder.Services.AddHostedService<TransactionUpdatedConsumer>();
+builder.Services.AddHostedService<TransactionDeletedConsumer>();
+
+// Khai báo topology queue giao dịch
+try
+{
+    var rmqHost = builder.Configuration["RabbitMQ:Host"] ?? "localhost";
+    var factory = new RabbitMQ.Client.ConnectionFactory { HostName = rmqHost };
+    using var conn = factory.CreateConnection();
+    using var ch = conn.CreateModel();
+    RabbitMqTopology.DeclareConsumerQueue(ch, "budget.transaction-created", "transaction.created");
+    RabbitMqTopology.DeclareConsumerQueue(ch, "budget.transaction-updated", "transaction.updated");
+    RabbitMqTopology.DeclareConsumerQueue(ch, "budget.transaction-deleted", "transaction.deleted");
+}
+catch (Exception)
+{
+    // Bỏ qua nếu RabbitMQ chưa sẵn sàng ở môi trường test không có broker
+}
+
 // Cấu hình JWT Bearer chung từ SharedKernel
 builder.Services.AddJwtAuthentication(builder.Configuration);
 
@@ -16,6 +70,25 @@ builder.Services.AddJwtAuthentication(builder.Configuration);
 builder.Services.AddConsulConfig(builder.Configuration);
 
 var app = builder.Build();
+
+// Khởi tạo Database nếu cần & áp dụng Migrations
+using (var scope = app.Services.CreateScope())
+{
+    var context = scope.ServiceProvider.GetRequiredService<BudgetDbContext>();
+    var conn = context.Database.GetDbConnection();
+    if (!string.IsNullOrEmpty(conn.DataSource) && Path.GetDirectoryName(conn.DataSource) is { Length: > 0 } dir)
+    {
+        Directory.CreateDirectory(dir);
+    }
+    context.Database.Migrate();
+
+    // Bật WAL mode cho SQLite
+    try
+    {
+        context.Database.ExecuteSqlRaw("PRAGMA journal_mode=WAL;");
+    }
+    catch { }
+}
 
 if (app.Environment.IsDevelopment())
 {
