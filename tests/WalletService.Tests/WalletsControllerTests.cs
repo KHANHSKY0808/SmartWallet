@@ -20,6 +20,7 @@ public class WalletsControllerTests : IDisposable
     private readonly WalletLedger _ledger;
     private readonly TestUserProfileClient _profileClient;
     private readonly TestEventPublisher _publisher;
+    private readonly TestSavingGoalClient _savingGoalClient;
     private readonly WalletsController _controller;
     private readonly Guid _userA = Guid.NewGuid();
     private readonly Guid _userB = Guid.NewGuid();
@@ -39,13 +40,15 @@ public class WalletsControllerTests : IDisposable
         _ledger = new WalletLedger(_context);
         _profileClient = new TestUserProfileClient();
         _publisher = new TestEventPublisher();
+        _savingGoalClient = new TestSavingGoalClient();
 
         _controller = new WalletsController(
             _context,
             _ledger,
             _profileClient,
             NullLogger<WalletsController>.Instance,
-            _publisher
+            _publisher,
+            _savingGoalClient
         );
 
         SetCurrentUser(_userA);
@@ -504,6 +507,120 @@ public class WalletsControllerTests : IDisposable
 
         Assert.Contains("Wallets", tables);
         Assert.Contains("WalletTransfers", tables);
+    }
+
+    [Fact]
+    public async Task Deposit_PublisherFailure_RollbacksAndReturns503_GT13()
+    {
+        var wallet = new Wallet
+        {
+            Id = Guid.NewGuid(),
+            UserId = _userA,
+            Name = "Ví tiết kiệm",
+            Currency = "VND",
+            Balance = 1_000_000m,
+            Type = WalletType.Cash,
+            RowVersion = Guid.NewGuid().ToByteArray()
+        };
+        await _context.Wallets.AddAsync(wallet);
+        await _context.SaveChangesAsync();
+
+        var goalId = Guid.NewGuid();
+        _savingGoalClient.Goals[goalId] = new SavingGoalInfo
+        {
+            Id = goalId,
+            UserId = _userA,
+            Name = "Mua máy tính",
+            Currency = "VND",
+            StatusCode = 1
+        };
+
+        _publisher.ShouldThrow = true;
+
+        var key = Guid.NewGuid().ToString();
+        var result = await _controller.GoalTransfer(wallet.Id, key, new GoalTransferRequest
+        {
+            GoalId = goalId,
+            Amount = 400_000m
+        }) as ObjectResult;
+
+        Assert.NotNull(result);
+        Assert.Equal(503, result.StatusCode);
+
+        // Verify wallet balance is unchanged in DB (rollback)
+        var refreshed = await _context.Wallets.AsNoTracking().FirstAsync(w => w.Id == wallet.Id);
+        Assert.Equal(1_000_000m, refreshed.Balance);
+    }
+
+    [Fact]
+    public async Task ConservationOfMoney_GT14()
+    {
+        var wallet = new Wallet
+        {
+            Id = Guid.NewGuid(),
+            UserId = _userA,
+            Name = "Ví tiền",
+            Currency = "VND",
+            Balance = 1_000_000m,
+            Type = WalletType.Cash,
+            RowVersion = Guid.NewGuid().ToByteArray()
+        };
+        await _context.Wallets.AddAsync(wallet);
+        await _context.SaveChangesAsync();
+
+        var goalId = Guid.NewGuid();
+        _savingGoalClient.Goals[goalId] = new SavingGoalInfo
+        {
+            Id = goalId,
+            UserId = _userA,
+            Name = "Mục tiêu bảo toàn",
+            Currency = "VND",
+            StatusCode = 1
+        };
+
+        var initialBalance = wallet.Balance;
+        var depositAmount = 300_000m;
+
+        var key = Guid.NewGuid().ToString();
+        var result = await _controller.GoalTransfer(wallet.Id, key, new GoalTransferRequest
+        {
+            GoalId = goalId,
+            Amount = depositAmount
+        }) as OkObjectResult;
+
+        Assert.NotNull(result);
+        Assert.Equal(200, result.StatusCode);
+
+        var refreshed = await _context.Wallets.AsNoTracking().FirstAsync(w => w.Id == wallet.Id);
+        Assert.Equal(initialBalance - depositAmount, refreshed.Balance);
+    }
+
+    [Fact]
+    public async Task InternalGetWallet_ReturnsMetadata_N23_N25()
+    {
+        var wallet = new Wallet
+        {
+            Id = Guid.NewGuid(),
+            UserId = _userA,
+            Name = "Ví kiểm tra",
+            Currency = "USD",
+            Balance = 500m,
+            Type = WalletType.Cash,
+            IsArchived = false,
+            RowVersion = Guid.NewGuid().ToByteArray()
+        };
+        await _context.Wallets.AddAsync(wallet);
+        await _context.SaveChangesAsync();
+
+        // Existing wallet returns 200 with metadata
+        var result = await _controller.GetInternalWallet(wallet.Id) as OkObjectResult;
+        Assert.NotNull(result);
+        Assert.Equal(200, result.StatusCode);
+
+        // Non-existing wallet returns 404
+        var notFoundResult = await _controller.GetInternalWallet(Guid.NewGuid()) as NotFoundObjectResult;
+        Assert.NotNull(notFoundResult);
+        Assert.Equal(404, notFoundResult.StatusCode);
     }
 
     public void Dispose()

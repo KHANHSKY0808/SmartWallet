@@ -14,6 +14,7 @@ using FileService.Controllers;
 using FileService.Data;
 using FileService.DTOs;
 using FileService.Models;
+using FileService.Services;
 
 namespace FileService.Tests;
 
@@ -234,6 +235,50 @@ public class FilesControllerTests : IDisposable
         Assert.Null(updated.RelatedEntityId);
         Assert.NotNull(updated.ExpiresAt);
         Assert.True(updated.ExpiresAt > DateTime.UtcNow);
+    }
+
+    [Fact]
+    public async Task OrphanFileCleanup_RemovesExpiredOrphans_RC07()
+    {
+        var tempFolder = Path.Combine(_env.ContentRootPath, "uploads", "receipts");
+        Directory.CreateDirectory(tempFolder);
+        var testFilePath = Path.Combine(tempFolder, "orphan-test.png");
+        await System.IO.File.WriteAllTextAsync(testFilePath, "test dummy content");
+
+        var fileId = Guid.NewGuid();
+        var expiredOrphan = new FileMetadata
+        {
+            Id = fileId,
+            OwnerUserId = _userA,
+            Purpose = 1,
+            OriginalFileName = "orphan-test.png",
+            StoragePath = testFilePath,
+            ContentType = "image/png",
+            SizeBytes = 100,
+            RelatedEntityType = null,
+            RelatedEntityId = null,
+            CreatedAt = DateTime.UtcNow.AddDays(-10),
+            ExpiresAt = DateTime.UtcNow.AddDays(-1) // expired
+        };
+
+        await _context.FileMetadatas.AddAsync(expiredOrphan);
+        await _context.SaveChangesAsync();
+
+        Assert.True(System.IO.File.Exists(testFilePath));
+
+        var services = new ServiceCollection();
+        services.AddSingleton(_context);
+        var serviceProvider = services.BuildServiceProvider();
+
+        var cleanupService = new OrphanFileCleanupService(serviceProvider, NullLogger<OrphanFileCleanupService>.Instance);
+        await cleanupService.CleanupOrphanFilesAsync();
+
+        // Verify physical file was deleted
+        Assert.False(System.IO.File.Exists(testFilePath));
+
+        // Verify DB record was removed
+        var recordInDb = await _context.FileMetadatas.FindAsync(fileId);
+        Assert.Null(recordInDb);
     }
 
     public void Dispose()

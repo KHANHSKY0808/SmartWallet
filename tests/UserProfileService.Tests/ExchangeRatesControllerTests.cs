@@ -154,6 +154,49 @@ public class ExchangeRatesControllerTests : IDisposable
         Assert.Equal(25450m, dto.Rate);
     }
 
+    [Fact]
+    public async Task ExchangeRate_Cache_FX09()
+    {
+        SetUser(_normalUserId);
+
+        // Fetch rate twice to verify consistent cached/resolved result
+        var result1 = await _controller.GetSingleExchangeRate("USD", "VND") as OkObjectResult;
+        Assert.NotNull(result1);
+        Assert.Equal(200, result1.StatusCode);
+        var dto1 = Assert.IsType<ExchangeRateDto>(result1.Value);
+
+        var result2 = await _controller.GetSingleExchangeRate("USD", "VND") as OkObjectResult;
+        Assert.NotNull(result2);
+        Assert.Equal(200, result2.StatusCode);
+        var dto2 = Assert.IsType<ExchangeRateDto>(result2.Value);
+
+        Assert.Equal(dto1.Rate, dto2.Rate);
+        Assert.Equal(25450m, dto2.Rate);
+    }
+
+    [Fact]
+    public async Task ExchangeRate_Fallback_FX10()
+    {
+        SetUser(_normalUserId);
+
+        // Same currency returns 1.0
+        var sameResult = await _controller.GetSingleExchangeRate("VND", "VND") as OkObjectResult;
+        Assert.NotNull(sameResult);
+        var sameDto = Assert.IsType<ExchangeRateDto>(sameResult.Value);
+        Assert.Equal(1.0m, sameDto.Rate);
+
+        // Inverted rate fallback
+        var invertResult = await _controller.GetSingleExchangeRate("VND", "USD") as OkObjectResult;
+        Assert.NotNull(invertResult);
+        var invertDto = Assert.IsType<ExchangeRateDto>(invertResult.Value);
+        Assert.True(invertDto.Rate > 0);
+
+        // Unsupported currency pair fallback -> 404
+        var missingResult = await _controller.GetSingleExchangeRate("JPY", "EUR") as NotFoundObjectResult;
+        Assert.NotNull(missingResult);
+        Assert.Equal(404, missingResult.StatusCode);
+    }
+
     public void Dispose()
     {
         _context.Dispose();

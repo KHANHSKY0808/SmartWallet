@@ -9,9 +9,9 @@ public static class ProfileDbInitializer
     {
         try
         {
-            await context.Database.EnsureCreatedAsync();
+            await context.Database.MigrateAsync();
             await context.Database.ExecuteSqlRawAsync("PRAGMA journal_mode = WAL;");
-            logger.LogInformation("Ensured created and set SQLite WAL mode for Profile DB");
+            logger.LogInformation("Migrated and set SQLite WAL mode for Profile DB");
 
             if (!await context.Currencies.AnyAsync())
             {

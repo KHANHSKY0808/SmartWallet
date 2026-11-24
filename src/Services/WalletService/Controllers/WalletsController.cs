@@ -83,6 +83,27 @@ public class WalletsController : ControllerBase
         return Ok(ToDto(wallet));
     }
 
+    [AllowAnonymous]
+    [HttpGet("/internal/wallets/{id:guid}")]
+    public async Task<IActionResult> GetInternalWallet(Guid id)
+    {
+        var wallet = await _context.Wallets.AsNoTracking()
+            .FirstOrDefaultAsync(w => w.Id == id);
+
+        if (wallet == null)
+        {
+            return NotFound(new { message = "Ví không tồn tại." });
+        }
+
+        return Ok(new
+        {
+            id = wallet.Id,
+            userId = wallet.UserId,
+            currency = wallet.Currency,
+            isArchived = wallet.IsArchived
+        });
+    }
+
     [HttpPost]
     public async Task<IActionResult> CreateWallet([FromBody] CreateWalletRequest request)
     {

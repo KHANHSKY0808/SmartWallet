@@ -63,13 +63,14 @@ public class ExchangeRatesController : ControllerBase
     }
 
     [HttpPut("{baseCurrency}/{targetCurrency}")]
+    [Authorize(Roles = "Admin")]
     public async Task<IActionResult> UpdateExchangeRate(
         [FromRoute] string baseCurrency,
         [FromRoute] string targetCurrency,
         [FromBody] UpdateRateRequest request)
     {
         var role = User.FindFirstValue(ClaimTypes.Role) ?? User.FindFirstValue("role");
-        if (!string.Equals(role, "Admin", StringComparison.OrdinalIgnoreCase))
+        if (!User.IsInRole("Admin") && !string.Equals(role, "Admin", StringComparison.OrdinalIgnoreCase))
         {
             return StatusCode(403, new { message = "Chỉ Admin mới có quyền cập nhật tỷ giá." });
         }

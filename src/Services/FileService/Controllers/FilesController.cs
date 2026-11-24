@@ -143,6 +143,12 @@ public class FilesController : ControllerBase
     [AllowAnonymous]
     public async Task<IActionResult> GetInternalFileMetadata([FromRoute] Guid id)
     {
+        var remoteIp = HttpContext.Connection.RemoteIpAddress;
+        if (remoteIp != null && !System.Net.IPAddress.IsLoopback(remoteIp))
+        {
+            return Forbid();
+        }
+
         var metadata = await _context.FileMetadatas.FirstOrDefaultAsync(f => f.Id == id && f.DeletedAt == null);
         if (metadata == null)
         {
@@ -159,21 +165,6 @@ public class FilesController : ControllerBase
             relatedEntityType = metadata.RelatedEntityType,
             relatedEntityId = metadata.RelatedEntityId
         });
-    }
-
-    [HttpPost("/internal/files/{id:guid}/orphan")]
-    [AllowAnonymous]
-    public async Task<IActionResult> MarkOrphan([FromRoute] Guid id)
-    {
-        var metadata = await _context.FileMetadatas.FirstOrDefaultAsync(f => f.Id == id && f.DeletedAt == null);
-        if (metadata != null)
-        {
-            metadata.RelatedEntityType = null;
-            metadata.RelatedEntityId = null;
-            metadata.ExpiresAt = DateTime.UtcNow.AddDays(7);
-            await _context.SaveChangesAsync();
-        }
-        return Ok(new { message = "Đã đánh dấu file mồ côi." });
     }
 
     private static (bool IsValid, string ContentType, string Extension) DetectImageType(byte[] header, string claimedExt)

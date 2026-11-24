@@ -45,8 +45,14 @@ public class GoalFundsDepositedConsumer : BaseRabbitMqConsumer<GoalFundsDeposite
         var goal = await context.SavingGoals.FirstOrDefaultAsync(g => g.Id == @event.GoalId, cancellationToken);
         if (goal == null)
         {
-            _logger.LogWarning("Không tìm thấy mục tiêu {GoalId} để cộng tiền nạp.", @event.GoalId);
-            return;
+            _logger.LogError("Không tìm thấy mục tiêu {GoalId} để cộng tiền nạp. Nack/DLQ.", @event.GoalId);
+            throw new InvalidOperationException($"Không tìm thấy mục tiêu {@event.GoalId} để cộng tiền nạp.");
+        }
+
+        if (goal.Status == 3)
+        {
+            _logger.LogError("Mục tiêu {GoalId} đã bị hủy, không thể nhận tiền nạp. Nack/DLQ.", @event.GoalId);
+            throw new InvalidOperationException($"Mục tiêu {@event.GoalId} đã bị hủy, không thể nhận tiền nạp.");
         }
 
         goal.CurrentAmount += @event.Amount;
@@ -81,21 +87,33 @@ public class GoalFundsDepositedConsumer : BaseRabbitMqConsumer<GoalFundsDeposite
             ProcessedAt = DateTime.UtcNow
         }, cancellationToken);
 
-        await context.SaveChangesAsync(cancellationToken);
-        _logger.LogInformation("Đã cộng {Amount} vào mục tiêu {GoalId}. CurrentAmount hiện tại: {Current}", @event.Amount, goal.Id, goal.CurrentAmount);
-
-        if (newlyCompleted)
+        await using var tx = await context.Database.BeginTransactionAsync(cancellationToken);
+        try
         {
-            await publisher.PublishAsync(new GoalCompletedEvent
+            await context.SaveChangesAsync(cancellationToken);
+            _logger.LogInformation("Đã cộng {Amount} vào mục tiêu {GoalId}. CurrentAmount hiện tại: {Current}", @event.Amount, goal.Id, goal.CurrentAmount);
+
+            if (newlyCompleted)
             {
-                Id = Guid.NewGuid(),
-                GoalId = goal.Id,
-                UserId = goal.UserId,
-                GoalName = goal.Name,
-                TargetAmount = goal.TargetAmount,
-                CurrentAmount = goal.CurrentAmount
-            }, "goal.completed", cancellationToken);
-            _logger.LogInformation("Phát sự kiện GoalCompleted cho mục tiêu {GoalId} ({GoalName})", goal.Id, goal.Name);
+                await publisher.PublishAsync(new GoalCompletedEvent
+                {
+                    Id = Guid.NewGuid(),
+                    GoalId = goal.Id,
+                    UserId = goal.UserId,
+                    GoalName = goal.Name,
+                    TargetAmount = goal.TargetAmount,
+                    CurrentAmount = goal.CurrentAmount
+                }, "goal.completed", cancellationToken);
+                _logger.LogInformation("Phát sự kiện GoalCompleted cho mục tiêu {GoalId} ({GoalName})", goal.Id, goal.Name);
+            }
+
+            await tx.CommitAsync(cancellationToken);
+        }
+        catch (Exception ex)
+        {
+            await tx.RollbackAsync(cancellationToken);
+            _logger.LogError(ex, "Lỗi khi lưu và phát sự kiện GoalFundsDeposited cho {GoalId}", @event.GoalId);
+            throw;
         }
     }
 }

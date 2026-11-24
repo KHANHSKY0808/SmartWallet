@@ -37,7 +37,7 @@ public class SavingGoalDbContext : DbContext
             entity.HasKey(e => e.Id);
             entity.Property(e => e.Amount).HasColumnType("decimal(18,2)").IsRequired();
             entity.Property(e => e.IdempotencyKey).IsRequired().HasMaxLength(100);
-            entity.HasIndex(e => e.IdempotencyKey).IsUnique();
+            entity.HasIndex(e => new { e.UserId, e.IdempotencyKey }).IsUnique();
             entity.HasIndex(e => new { e.GoalId, e.CreatedDate });
             entity.HasIndex(e => new { e.UserId, e.CreatedDate });
         });
@@ -51,8 +51,9 @@ public class SavingGoalDbContext : DbContext
         modelBuilder.Entity<IdempotencyRecord>(entity =>
         {
             entity.ToTable("IdempotencyRecords");
-            entity.HasKey(e => e.Key);
+            entity.HasKey(e => new { e.UserId, e.Key });
             entity.Property(e => e.Key).HasMaxLength(100);
+            entity.Property(e => e.RequestHash).HasMaxLength(64);
         });
     }
 }

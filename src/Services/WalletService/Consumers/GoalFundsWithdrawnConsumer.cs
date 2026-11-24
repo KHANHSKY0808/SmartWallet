@@ -43,10 +43,10 @@ public class GoalFundsWithdrawnConsumer : BaseRabbitMqConsumer<GoalFundsWithdraw
         }
 
         var wallet = await context.Wallets.FirstOrDefaultAsync(w => w.Id == @event.WalletId, cancellationToken);
-        if (wallet == null)
+        if (wallet == null || wallet.UserId != @event.UserId || wallet.IsArchived)
         {
-            _logger.LogWarning("Không tìm thấy ví {WalletId} để cộng tiền rút từ mục tiêu.", @event.WalletId);
-            return;
+            _logger.LogError("Ví {WalletId} không hợp lệ để cộng tiền rút từ mục tiêu (Missing, wrong user, or archived)", @event.WalletId);
+            throw new InvalidOperationException($"Ví {@event.WalletId} không hợp lệ để nhận tiền từ mục tiêu.");
         }
 
         wallet.Balance += @event.Amount;

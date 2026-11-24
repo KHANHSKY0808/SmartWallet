@@ -3,6 +3,7 @@ using SharedKernel.Extensions;
 using SharedKernel.Messaging;
 using SavingGoalService.Consumers;
 using SavingGoalService.Data;
+using SavingGoalService.Services;
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -17,6 +18,14 @@ var connectionString = builder.Configuration.GetConnectionString("DefaultConnect
 builder.Services.AddDbContext<SavingGoalDbContext>(options =>
 {
     options.UseSqlite(connectionString);
+});
+
+// Cấu hình WalletServiceClient
+builder.Services.AddHttpClient<IWalletServiceClient, WalletServiceClient>(client =>
+{
+    var url = builder.Configuration["Services:WalletService:Url"] ?? "http://localhost:8003";
+    client.BaseAddress = new Uri(url);
+    client.Timeout = TimeSpan.FromSeconds(3);
 });
 
 // Cấu hình Event Publisher và Consumers
@@ -51,7 +60,12 @@ using (var scope = app.Services.CreateScope())
     var db = scope.ServiceProvider.GetRequiredService<SavingGoalDbContext>();
     try
     {
-        db.Database.EnsureCreated();
+        var conn = db.Database.GetDbConnection();
+        if (!string.IsNullOrEmpty(conn.DataSource) && Path.GetDirectoryName(conn.DataSource) is { Length: > 0 } dir)
+        {
+            Directory.CreateDirectory(dir);
+        }
+        db.Database.Migrate();
         db.Database.ExecuteSqlRaw("PRAGMA journal_mode = WAL;");
     }
     catch (Exception ex)

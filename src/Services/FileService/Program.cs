@@ -2,6 +2,7 @@
 using SharedKernel.Extensions;
 using FileService.Consumers;
 using FileService.Data;
+using FileService.Services;
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -26,16 +27,22 @@ builder.Services.AddJwtAuthentication(builder.Configuration);
 // Cấu hình Consul Service Discovery từ SharedKernel
 builder.Services.AddConsulConfig(builder.Configuration);
 
-// Cấu hình RabbitMQ Consumer
+// Cấu hình RabbitMQ Consumer và Background Services
 builder.Services.AddHostedService<TransactionDeletedConsumer>();
+builder.Services.AddHostedService<OrphanFileCleanupService>();
 
 var app = builder.Build();
 
-// Tự động migrate / EnsureCreated DB
+// Tự động migrate DB
 using (var scope = app.Services.CreateScope())
 {
     var db = scope.ServiceProvider.GetRequiredService<FileDbContext>();
-    db.Database.EnsureCreated();
+    var conn = db.Database.GetDbConnection();
+    if (!string.IsNullOrEmpty(conn.DataSource) && Path.GetDirectoryName(conn.DataSource) is { Length: > 0 } dir)
+    {
+        Directory.CreateDirectory(dir);
+    }
+    db.Database.Migrate();
 }
 
 if (app.Environment.IsDevelopment())

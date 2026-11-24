@@ -11,16 +11,34 @@ using SavingGoalService.Data;
 using SavingGoalService.DTOs;
 using SavingGoalService.Models;
 
+using SavingGoalService.Services;
+
 namespace SavingGoalService.Tests;
 
 public class MockEventPublisher : IEventPublisher
 {
     public List<IntegrationEvent> PublishedEvents { get; } = new();
+    public bool ShouldThrow { get; set; } = false;
 
     public Task PublishAsync<TEvent>(TEvent @event, string routingKey, CancellationToken cancellationToken = default) where TEvent : IntegrationEvent
     {
+        if (ShouldThrow)
+        {
+            throw new InvalidOperationException("RabbitMQ connection error");
+        }
         PublishedEvents.Add(@event);
         return Task.CompletedTask;
+    }
+}
+
+public class MockWalletServiceClient : IWalletServiceClient
+{
+    public Dictionary<Guid, WalletInfo> Wallets { get; } = new();
+
+    public Task<WalletInfo?> GetWalletAsync(Guid walletId, CancellationToken cancellationToken = default)
+    {
+        Wallets.TryGetValue(walletId, out var w);
+        return Task.FromResult(w);
     }
 }
 
@@ -29,6 +47,7 @@ public class SavingsControllerTests : IDisposable
     private readonly SqliteConnection _connection;
     private readonly SavingGoalDbContext _context;
     private readonly MockEventPublisher _publisher;
+    private readonly MockWalletServiceClient _walletServiceClient;
     private readonly SavingsController _controller;
     private readonly Guid _userA = Guid.NewGuid();
     private readonly Guid _userB = Guid.NewGuid();
@@ -46,7 +65,8 @@ public class SavingsControllerTests : IDisposable
         _context.Database.EnsureCreated();
 
         _publisher = new MockEventPublisher();
-        _controller = new SavingsController(_context, _publisher, NullLogger<SavingsController>.Instance);
+        _walletServiceClient = new MockWalletServiceClient();
+        _controller = new SavingsController(_context, _publisher, NullLogger<SavingsController>.Instance, _walletServiceClient);
 
         SetUser(_userA);
     }
@@ -223,6 +243,15 @@ public class SavingsControllerTests : IDisposable
     [Fact]
     public async Task GT06_Withdraw_DebitsGoalSynchronously()
     {
+        var walletId = Guid.NewGuid();
+        _walletServiceClient.Wallets[walletId] = new WalletInfo
+        {
+            Id = walletId,
+            UserId = _userA,
+            Currency = "VND",
+            IsArchived = false
+        };
+
         var goal = new SavingGoal
         {
             Id = Guid.NewGuid(),
@@ -239,7 +268,7 @@ public class SavingsControllerTests : IDisposable
         var key = Guid.NewGuid().ToString();
         var withdrawRes = await _controller.Withdraw(goal.Id, key, new WithdrawRequest
         {
-            WalletId = Guid.NewGuid(),
+            WalletId = walletId,
             Amount = 1_000_000m
         }) as OkObjectResult;
 
@@ -247,6 +276,260 @@ public class SavingsControllerTests : IDisposable
         var dto = Assert.IsType<SavingGoalDto>(withdrawRes.Value);
         Assert.Equal(2_000_000m, dto.CurrentAmount);
         Assert.Single(_publisher.PublishedEvents);
+    }
+
+    [Fact]
+    public async Task Withdraw_PublisherFailure_RollbacksAndReturns503_GT13()
+    {
+        var walletId = Guid.NewGuid();
+        _walletServiceClient.Wallets[walletId] = new WalletInfo
+        {
+            Id = walletId,
+            UserId = _userA,
+            Currency = "VND",
+            IsArchived = false
+        };
+
+        var goal = new SavingGoal
+        {
+            Id = Guid.NewGuid(),
+            UserId = _userA,
+            Name = "Mục tiêu rút lỗi",
+            TargetAmount = 10_000_000m,
+            CurrentAmount = 3_000_000m,
+            TargetDate = DateTime.UtcNow.AddDays(30),
+            Status = 1
+        };
+        await _context.SavingGoals.AddAsync(goal);
+        await _context.SaveChangesAsync();
+
+        _publisher.ShouldThrow = true;
+
+        var key = Guid.NewGuid().ToString();
+        var result = await _controller.Withdraw(goal.Id, key, new WithdrawRequest
+        {
+            WalletId = walletId,
+            Amount = 1_000_000m
+        }) as ObjectResult;
+
+        Assert.NotNull(result);
+        Assert.Equal(503, result.StatusCode);
+
+        // Verify goal amount is NOT changed (rollback)
+        var refreshedGoal = await _context.SavingGoals.AsNoTracking().FirstAsync(g => g.Id == goal.Id);
+        Assert.Equal(3_000_000m, refreshedGoal.CurrentAmount);
+    }
+
+    [Fact]
+    public async Task ConservationOfMoney_GT14()
+    {
+        var walletId = Guid.NewGuid();
+        _walletServiceClient.Wallets[walletId] = new WalletInfo
+        {
+            Id = walletId,
+            UserId = _userA,
+            Currency = "VND",
+            IsArchived = false
+        };
+
+        var goal = new SavingGoal
+        {
+            Id = Guid.NewGuid(),
+            UserId = _userA,
+            Name = "Bảo toàn tiền",
+            TargetAmount = 10_000_000m,
+            CurrentAmount = 2_000_000m,
+            TargetDate = DateTime.UtcNow.AddDays(30),
+            Status = 1
+        };
+        await _context.SavingGoals.AddAsync(goal);
+        await _context.SaveChangesAsync();
+
+        var initialAmount = goal.CurrentAmount;
+        var withdrawAmount = 500_000m;
+
+        var key = Guid.NewGuid().ToString();
+        var res = await _controller.Withdraw(goal.Id, key, new WithdrawRequest
+        {
+            WalletId = walletId,
+            Amount = withdrawAmount
+        }) as OkObjectResult;
+
+        Assert.NotNull(res);
+        var dto = Assert.IsType<SavingGoalDto>(res.Value);
+        Assert.Equal(initialAmount - withdrawAmount, dto.CurrentAmount);
+    }
+
+    [Fact]
+    public async Task CalculateMonthlyRequired_SG07()
+    {
+        // Target: 10,000,000, Current: 4,000,000 => Remaining: 6,000,000
+        // TargetDate in 90 days (~3 months) => MonthlyRequired ~ 2,000,000
+        var goal = new SavingGoal
+        {
+            Id = Guid.NewGuid(),
+            UserId = _userA,
+            Name = "Mục tiêu mua xe",
+            TargetAmount = 10_000_000m,
+            CurrentAmount = 4_000_000m,
+            TargetDate = DateTime.UtcNow.AddDays(90),
+            Status = 1
+        };
+        await _context.SavingGoals.AddAsync(goal);
+        await _context.SaveChangesAsync();
+
+        var res = await _controller.GetGoalById(goal.Id) as OkObjectResult;
+        Assert.NotNull(res);
+        var dto = Assert.IsType<SavingGoalDto>(res.Value);
+
+        Assert.True(dto.MonthlyRequired > 0);
+        Assert.Equal(6_000_000m / 3m, dto.MonthlyRequired);
+    }
+
+    [Fact]
+    public async Task Withdraw_WalletValidation_N23_N24_N25()
+    {
+        var otherUserWalletId = Guid.NewGuid();
+        _walletServiceClient.Wallets[otherUserWalletId] = new WalletInfo
+        {
+            Id = otherUserWalletId,
+            UserId = _userB, // belongs to user B!
+            Currency = "VND",
+            IsArchived = false
+        };
+
+        var usdWalletId = Guid.NewGuid();
+        _walletServiceClient.Wallets[usdWalletId] = new WalletInfo
+        {
+            Id = usdWalletId,
+            UserId = _userA,
+            Currency = "USD", // Mismatched currency
+            IsArchived = false
+        };
+
+        var archivedWalletId = Guid.NewGuid();
+        _walletServiceClient.Wallets[archivedWalletId] = new WalletInfo
+        {
+            Id = archivedWalletId,
+            UserId = _userA,
+            Currency = "VND",
+            IsArchived = true
+        };
+
+        var goal = new SavingGoal
+        {
+            Id = Guid.NewGuid(),
+            UserId = _userA,
+            Name = "Goal Test",
+            TargetAmount = 10_000_000m,
+            CurrentAmount = 3_000_000m,
+            Currency = "VND",
+            TargetDate = DateTime.UtcNow.AddDays(30),
+            Status = 1
+        };
+        await _context.SavingGoals.AddAsync(goal);
+        await _context.SaveChangesAsync();
+
+        // N23: Other user's wallet -> 404
+        var resN23 = await _controller.Withdraw(goal.Id, Guid.NewGuid().ToString(), new WithdrawRequest
+        {
+            WalletId = otherUserWalletId,
+            Amount = 100_000m
+        }) as ObjectResult;
+        Assert.NotNull(resN23);
+        Assert.Equal(404, resN23.StatusCode);
+
+        // N24: Currency mismatch -> 400
+        var resN24 = await _controller.Withdraw(goal.Id, Guid.NewGuid().ToString(), new WithdrawRequest
+        {
+            WalletId = usdWalletId,
+            Amount = 100_000m
+        }) as BadRequestObjectResult;
+        Assert.NotNull(resN24);
+        Assert.Equal(400, resN24.StatusCode);
+
+        // N25: Missing wallet -> 404
+        var resN25 = await _controller.Withdraw(goal.Id, Guid.NewGuid().ToString(), new WithdrawRequest
+        {
+            WalletId = Guid.NewGuid(),
+            Amount = 100_000m
+        }) as ObjectResult;
+        Assert.NotNull(resN25);
+        Assert.Equal(404, resN25.StatusCode);
+
+        // Archived wallet -> 400
+        var resArchived = await _controller.Withdraw(goal.Id, Guid.NewGuid().ToString(), new WithdrawRequest
+        {
+            WalletId = archivedWalletId,
+            Amount = 100_000m
+        }) as BadRequestObjectResult;
+        Assert.NotNull(resArchived);
+        Assert.Equal(400, resArchived.StatusCode);
+    }
+
+    [Fact]
+    public async Task Idempotency_ScopedByUserId_N27()
+    {
+        var walletA = Guid.NewGuid();
+        _walletServiceClient.Wallets[walletA] = new WalletInfo { Id = walletA, UserId = _userA, Currency = "VND" };
+
+        var walletB = Guid.NewGuid();
+        _walletServiceClient.Wallets[walletB] = new WalletInfo { Id = walletB, UserId = _userB, Currency = "VND" };
+
+        var goalA = new SavingGoal
+        {
+            Id = Guid.NewGuid(),
+            UserId = _userA,
+            Name = "Goal A",
+            TargetAmount = 5_000_000m,
+            CurrentAmount = 2_000_000m,
+            TargetDate = DateTime.UtcNow.AddDays(30)
+        };
+        var goalB = new SavingGoal
+        {
+            Id = Guid.NewGuid(),
+            UserId = _userB,
+            Name = "Goal B",
+            TargetAmount = 5_000_000m,
+            CurrentAmount = 2_000_000m,
+            TargetDate = DateTime.UtcNow.AddDays(30)
+        };
+        await _context.SavingGoals.AddRangeAsync(goalA, goalB);
+        await _context.SaveChangesAsync();
+
+        var sharedKey = "shared-key-123";
+
+        // User A withdraws
+        SetUser(_userA);
+        var resA = await _controller.Withdraw(goalA.Id, sharedKey, new WithdrawRequest
+        {
+            WalletId = walletA,
+            Amount = 200_000m
+        }) as OkObjectResult;
+        Assert.NotNull(resA);
+        Assert.Equal(200, resA.StatusCode);
+
+        // User B withdraws with same key
+        SetUser(_userB);
+        var resB = await _controller.Withdraw(goalB.Id, sharedKey, new WithdrawRequest
+        {
+            WalletId = walletB,
+            Amount = 300_000m
+        }) as OkObjectResult;
+        Assert.NotNull(resB);
+        Assert.Equal(200, resB.StatusCode);
+        var dtoB = Assert.IsType<SavingGoalDto>(resB.Value);
+        Assert.Equal(1_700_000m, dtoB.CurrentAmount); // Goal B executed, not cached from A!
+
+        // User A replays same key with different payload -> 422
+        SetUser(_userA);
+        var resReplay = await _controller.Withdraw(goalA.Id, sharedKey, new WithdrawRequest
+        {
+            WalletId = walletA,
+            Amount = 500_000m // different amount
+        }) as ObjectResult;
+        Assert.NotNull(resReplay);
+        Assert.Equal(422, resReplay.StatusCode);
     }
 
     [Fact]

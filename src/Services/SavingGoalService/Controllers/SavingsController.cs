@@ -1,4 +1,6 @@
 using System.Security.Claims;
+using System.Security.Cryptography;
+using System.Text;
 using System.Text.Json;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
@@ -8,6 +10,7 @@ using SharedKernel.Messaging;
 using SavingGoalService.Data;
 using SavingGoalService.DTOs;
 using SavingGoalService.Models;
+using SavingGoalService.Services;
 
 namespace SavingGoalService.Controllers;
 
@@ -24,12 +27,18 @@ public class SavingsController : ControllerBase
     private readonly SavingGoalDbContext _context;
     private readonly IEventPublisher _publisher;
     private readonly ILogger<SavingsController> _logger;
+    private readonly IWalletServiceClient? _walletServiceClient;
 
-    public SavingsController(SavingGoalDbContext context, IEventPublisher publisher, ILogger<SavingsController> logger)
+    public SavingsController(
+        SavingGoalDbContext context,
+        IEventPublisher publisher,
+        ILogger<SavingsController> logger,
+        IWalletServiceClient? walletServiceClient = null)
     {
         _context = context;
         _publisher = publisher;
         _logger = logger;
+        _walletServiceClient = walletServiceClient;
     }
 
     [HttpPost]
@@ -169,29 +178,40 @@ public class SavingsController : ControllerBase
             }
         }
 
-        if (request.Status.HasValue)
-        {
-            goal.Status = request.Status.Value;
-        }
-
         goal.UpdatedAt = DateTime.UtcNow;
         goal.RowVersion = Guid.NewGuid().ToByteArray();
 
-        if (newlyCompleted)
+        await using var txUpdate = await _context.Database.BeginTransactionAsync();
+        try
         {
-            await _publisher.PublishAsync(new GoalCompletedEvent
-            {
-                Id = Guid.NewGuid(),
-                GoalId = goal.Id,
-                UserId = goal.UserId,
-                GoalName = goal.Name,
-                TargetAmount = goal.TargetAmount,
-                CurrentAmount = goal.CurrentAmount
-            }, "goal.completed");
-        }
+            await _context.SaveChangesAsync();
 
-        await _context.SaveChangesAsync();
-        return Ok(MapToDto(goal));
+            if (newlyCompleted)
+            {
+                await _publisher.PublishAsync(new GoalCompletedEvent
+                {
+                    Id = Guid.NewGuid(),
+                    GoalId = goal.Id,
+                    UserId = goal.UserId,
+                    GoalName = goal.Name,
+                    TargetAmount = goal.TargetAmount,
+                    CurrentAmount = goal.CurrentAmount
+                }, "goal.completed");
+            }
+
+            await txUpdate.CommitAsync();
+            return Ok(MapToDto(goal));
+        }
+        catch (DbUpdateConcurrencyException)
+        {
+            await txUpdate.RollbackAsync();
+            return StatusCode(409, new { code = "CONCURRENCY_CONFLICT", message = "Xung đột đồng thời khi cập nhật mục tiêu." });
+        }
+        catch (Exception)
+        {
+            await txUpdate.RollbackAsync();
+            throw;
+        }
     }
 
     [HttpDelete("{id:guid}")]
@@ -211,7 +231,16 @@ public class SavingsController : ControllerBase
 
         goal.Status = 3; // Cancelled
         goal.UpdatedAt = DateTime.UtcNow;
-        await _context.SaveChangesAsync();
+        goal.RowVersion = Guid.NewGuid().ToByteArray();
+
+        try
+        {
+            await _context.SaveChangesAsync();
+        }
+        catch (DbUpdateConcurrencyException)
+        {
+            return StatusCode(409, new { code = "CONCURRENCY_CONFLICT", message = "Xung đột đồng thời khi hủy mục tiêu." });
+        }
 
         return Ok(new { message = "Đã hủy mục tiêu thành công." });
     }
@@ -228,9 +257,18 @@ public class SavingsController : ControllerBase
         }
 
         var key = idempotencyKey.Trim();
-        var existingRecord = await _context.IdempotencyRecords.FirstOrDefaultAsync(r => r.Key == key);
+        var userId = GetCurrentUserId();
+
+        var requestPayload = $"{request.WalletId}:{request.Amount:F2}";
+        var requestHash = Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(requestPayload)));
+
+        var existingRecord = await _context.IdempotencyRecords.FirstOrDefaultAsync(r => r.UserId == userId && r.Key == key);
         if (existingRecord != null)
         {
+            if (!string.Equals(existingRecord.RequestHash, requestHash, StringComparison.OrdinalIgnoreCase))
+            {
+                return StatusCode(422, new { code = "IDEMPOTENCY_KEY_REUSED", message = "Idempotency key đã được sử dụng với payload khác." });
+            }
             return StatusCode(existingRecord.StatusCode, JsonSerializer.Deserialize<object>(existingRecord.ResponseJson));
         }
 
@@ -239,27 +277,45 @@ public class SavingsController : ControllerBase
             return BadRequest(new { message = "Số tiền rút phải lớn hơn 0." });
         }
 
-        var userId = GetCurrentUserId();
+        var goal = await _context.SavingGoals.FirstOrDefaultAsync(g => g.Id == goalId && g.UserId == userId);
+        if (goal == null)
+        {
+            return NotFound(new { message = "Không tìm thấy mục tiêu tiết kiệm." });
+        }
+
+        if (goal.Status == 3)
+        {
+            return BadRequest(new { code = "GOAL_CANCELLED", message = "Mục tiêu đã bị hủy, không thể rút tiền." });
+        }
+
+        if (goal.CurrentAmount < request.Amount)
+        {
+            return BadRequest(new { code = "INSUFFICIENT_GOAL_FUNDS", message = "Số tiền tích lũy không đủ để rút." });
+        }
+
+        // N23, N24, N25: Kiểm tra ví đích đồng bộ qua WalletService
+        if (_walletServiceClient != null)
+        {
+            var wallet = await _walletServiceClient.GetWalletAsync(request.WalletId);
+            if (wallet == null || wallet.UserId != userId)
+            {
+                return NotFound(new { message = "Ví không tồn tại hoặc không thuộc quyền sở hữu của bạn." });
+            }
+
+            if (wallet.IsArchived)
+            {
+                return BadRequest(new { code = "WALLET_ARCHIVED", message = "Ví đã bị lưu trữ, không thể nhận tiền rút." });
+            }
+
+            if (!string.Equals(wallet.Currency, goal.Currency, StringComparison.OrdinalIgnoreCase))
+            {
+                return BadRequest(new { code = "CURRENCY_MISMATCH", message = $"Loại tiền của ví ({wallet.Currency}) không khớp với loại tiền của mục tiêu ({goal.Currency})." });
+            }
+        }
 
         await using var tx = await _context.Database.BeginTransactionAsync(System.Data.IsolationLevel.Serializable);
         try
         {
-            var goal = await _context.SavingGoals.FirstOrDefaultAsync(g => g.Id == goalId && g.UserId == userId);
-            if (goal == null)
-            {
-                return NotFound(new { message = "Không tìm thấy mục tiêu tiết kiệm." });
-            }
-
-            if (goal.Status == 3)
-            {
-                return BadRequest(new { code = "GOAL_CANCELLED", message = "Mục tiêu đã bị hủy, không thể rút tiền." });
-            }
-
-            if (goal.CurrentAmount < request.Amount)
-            {
-                return BadRequest(new { code = "INSUFFICIENT_GOAL_FUNDS", message = "Số tiền tích lũy không đủ để rút." });
-            }
-
             goal.CurrentAmount -= request.Amount;
             goal.UpdatedAt = DateTime.UtcNow;
             goal.RowVersion = Guid.NewGuid().ToByteArray();
@@ -283,16 +339,19 @@ public class SavingsController : ControllerBase
 
             await _context.IdempotencyRecords.AddAsync(new IdempotencyRecord
             {
+                UserId = userId,
                 Key = key,
+                RequestHash = requestHash,
                 ResponseJson = responseJson,
                 StatusCode = 200,
-                CreatedAt = DateTime.UtcNow
+                CreatedAt = DateTime.UtcNow,
+                ExpiresAt = DateTime.UtcNow.AddDays(7)
             });
 
             await _context.SaveChangesAsync();
 
-            // Publish confirm event GoalFundsWithdrawn
-            var eventId = new Guid(System.Security.Cryptography.MD5.HashData(System.Text.Encoding.UTF8.GetBytes($"goal-withdraw:{userId}:{key}")));
+            // Publish confirm event GoalFundsWithdrawn bên trong transaction
+            var eventId = new Guid(MD5.HashData(Encoding.UTF8.GetBytes($"goal-withdraw:{userId}:{key}")));
             await _publisher.PublishAsync(new GoalFundsWithdrawnEvent
             {
                 Id = eventId,
@@ -316,7 +375,7 @@ public class SavingsController : ControllerBase
         {
             await tx.RollbackAsync();
             _context.ChangeTracker.Clear();
-            var record = await _context.IdempotencyRecords.AsNoTracking().FirstOrDefaultAsync(r => r.Key == key);
+            var record = await _context.IdempotencyRecords.AsNoTracking().FirstOrDefaultAsync(r => r.UserId == userId && r.Key == key);
             if (record != null)
             {
                 return StatusCode(record.StatusCode, JsonSerializer.Deserialize<object>(record.ResponseJson));
