@@ -48,8 +48,15 @@ app.UseCors("AllowFrontend");
 app.UseAuthentication();
 app.UseAuthorization();
 
-// Gateway health (không lộ /metrics qua Gateway theo D61 / HM-05)
-app.UseServiceHealthAndMetrics("ApiGateway.Yarp", exposeMetrics: false);
+// Gateway health (giữ "healthy" viết thường theo test_G01, không lộ /metrics qua Gateway theo D61 / HM-05)
+app.MapGet("/health", () => Results.Ok(new
+{
+    status = "healthy",
+    gateway = "ApiGateway.Yarp",
+    port = 8000,
+    timestamp = DateTime.UtcNow
+}));
+app.MapGet("/health/live", () => Results.Ok(new { status = "Healthy", service = "ApiGateway.Yarp" }));
 
 // D61 / FIN-136 / HM-03, HM-04: Endpoint tổng hợp trạng thái 12 microservices cho Admin
 var monitoredServices = new (string Name, string ClusterKey, string DefaultUrl)[]

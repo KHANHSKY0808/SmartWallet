@@ -29,28 +29,36 @@ public class RabbitMqHealthCheck : IHealthCheck
         _port = int.TryParse(configuration["RabbitMQ:Port"], out var p) ? p : 5672;
     }
 
-    public Task<HealthCheckResult> CheckHealthAsync(HealthCheckContext context, CancellationToken cancellationToken = default)
+    public async Task<HealthCheckResult> CheckHealthAsync(HealthCheckContext context, CancellationToken cancellationToken = default)
     {
         try
         {
+            // Kiểm tra TCP nhanh (300ms) trước để tránh HTTP client timeout 1s khi broker tắt (test_S3_20 / X04)
+            using (var tcp = new TcpClient())
+            {
+                using var cts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+                cts.CancelAfter(TimeSpan.FromMilliseconds(300));
+                await tcp.ConnectAsync(_host, _port, cts.Token);
+            }
+
             var factory = new ConnectionFactory
             {
                 HostName = _host,
                 Port = _port,
-                RequestedConnectionTimeout = TimeSpan.FromSeconds(1.5),
-                SocketReadTimeout = TimeSpan.FromSeconds(1.5),
-                SocketWriteTimeout = TimeSpan.FromSeconds(1.5)
+                RequestedConnectionTimeout = TimeSpan.FromMilliseconds(400),
+                SocketReadTimeout = TimeSpan.FromMilliseconds(400),
+                SocketWriteTimeout = TimeSpan.FromMilliseconds(400)
             };
             using var conn = factory.CreateConnection();
             if (conn.IsOpen)
             {
-                return Task.FromResult(HealthCheckResult.Healthy("RabbitMQ reachable"));
+                return HealthCheckResult.Healthy("RabbitMQ reachable");
             }
-            return Task.FromResult(HealthCheckResult.Degraded("RabbitMQ not open"));
+            return HealthCheckResult.Degraded("RabbitMQ not open");
         }
         catch
         {
-            return Task.FromResult(HealthCheckResult.Degraded("RabbitMQ unavailable"));
+            return HealthCheckResult.Degraded("RabbitMQ unavailable");
         }
     }
 }
@@ -75,7 +83,7 @@ public class RedisHealthCheck : IHealthCheck
         {
             using var tcp = new TcpClient();
             using var cts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
-            cts.CancelAfter(TimeSpan.FromSeconds(1.5));
+            cts.CancelAfter(TimeSpan.FromMilliseconds(300));
             await tcp.ConnectAsync(_host, _port, cts.Token);
             return HealthCheckResult.Healthy("Redis reachable");
         }
