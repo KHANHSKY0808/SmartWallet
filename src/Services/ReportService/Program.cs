@@ -39,7 +39,7 @@ builder.Services.AddHttpClient<IExchangeRateClient, ExchangeRateClient>(client =
 {
     client.BaseAddress = new Uri(builder.Configuration["Services:UserProfileService:Url"] ?? "http://localhost:8002");
     client.Timeout = TimeSpan.FromSeconds(2);
-});
+}).AddHttpMessageHandler(sp => new SystemTokenDelegatingHandler(sp.GetRequiredService<IConfiguration>(), "ReportService"));
 builder.Services.AddHttpClient<IBudgetClient, BudgetClient>(client =>
 {
     client.BaseAddress = new Uri(builder.Configuration["Services:BudgetService:Url"] ?? "http://localhost:8006");
@@ -49,12 +49,12 @@ builder.Services.AddHttpClient<ICategoryLookupClient, CategoryLookupClient>(clie
 {
     client.BaseAddress = new Uri(builder.Configuration["Services:CategoryService:Url"] ?? "http://localhost:8005");
     client.Timeout = TimeSpan.FromSeconds(2);
-});
+}).AddHttpMessageHandler(sp => new SystemTokenDelegatingHandler(sp.GetRequiredService<IConfiguration>(), "ReportService"));
 builder.Services.AddHttpClient<IWalletLookupClient, WalletLookupClient>(client =>
 {
     client.BaseAddress = new Uri(builder.Configuration["Services:WalletService:Url"] ?? "http://localhost:8003");
     client.Timeout = TimeSpan.FromSeconds(2);
-});
+}).AddHttpMessageHandler(sp => new SystemTokenDelegatingHandler(sp.GetRequiredService<IConfiguration>(), "ReportService"));
 builder.Services.AddHttpClient<ITransactionBackfillClient, TransactionBackfillClient>(client =>
 {
     client.BaseAddress = new Uri(builder.Configuration["Services:TransactionService:Url"] ?? "http://localhost:8004");

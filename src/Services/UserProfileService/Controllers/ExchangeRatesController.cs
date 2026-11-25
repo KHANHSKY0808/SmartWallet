@@ -2,6 +2,7 @@ using System.Security.Claims;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
+using SharedKernel.Extensions;
 using UserProfileService.Data;
 using UserProfileService.Models;
 
@@ -63,16 +64,15 @@ public class ExchangeRatesController : ControllerBase
     }
 
     [HttpPut("{baseCurrency}/{targetCurrency}")]
-    [Authorize(Roles = "Admin")]
+    [Authorize(Policy = AppPermissions.RatesWrite)]
     public async Task<IActionResult> UpdateExchangeRate(
         [FromRoute] string baseCurrency,
         [FromRoute] string targetCurrency,
         [FromBody] UpdateRateRequest request)
     {
-        var role = User.FindFirstValue(ClaimTypes.Role) ?? User.FindFirstValue("role");
-        if (!User.IsInRole("Admin") && !string.Equals(role, "Admin", StringComparison.OrdinalIgnoreCase))
+        if (!JwtAuthExtensions.HasPermission(User, AppPermissions.RatesWrite))
         {
-            return StatusCode(403, new { message = "Chỉ Admin mới có quyền cập nhật tỷ giá." });
+            return StatusCode(403, new { message = "Bạn không có quyền cập nhật tỷ giá." });
         }
 
         if (request.Rate <= 0)
@@ -157,7 +157,7 @@ public class ExchangeRatesController : ControllerBase
         });
     }
 
-    [AllowAnonymous]
+    [Authorize(Policy = "SystemOnly")]
     [HttpGet("/internal/exchange-rates")]
     public async Task<IActionResult> GetInternalExchangeRate([FromQuery(Name = "base")] string? baseCur, [FromQuery(Name = "target")] string? targetCur)
     {

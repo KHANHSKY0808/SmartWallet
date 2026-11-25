@@ -25,10 +25,7 @@ public class FileServiceClient : IFileServiceClient
         try
         {
             using var request = new HttpRequestMessage(HttpMethod.Get, $"/internal/files/{fileId}");
-            if (!string.IsNullOrWhiteSpace(bearerToken))
-            {
-                request.Headers.Add("Authorization", bearerToken.StartsWith("Bearer ", StringComparison.OrdinalIgnoreCase) ? bearerToken : $"Bearer {bearerToken}");
-            }
+            // D65: Endpoint /internal/* yêu cầu System token (gắn tự động qua SystemTokenDelegatingHandler)
 
             var response = await _httpClient.SendAsync(request, cancellationToken);
             if (!response.IsSuccessStatusCode)

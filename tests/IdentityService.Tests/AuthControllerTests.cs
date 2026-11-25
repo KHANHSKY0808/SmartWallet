@@ -8,6 +8,9 @@ using Microsoft.Data.Sqlite;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging.Abstractions;
+using SharedKernel.Events;
+using SharedKernel.Events.EventContracts;
+using SharedKernel.Messaging;
 
 namespace IdentityService.Tests;
 
@@ -17,7 +20,7 @@ public class AuthControllerTests : IDisposable
     private readonly IdentityDbContext _context;
     private readonly PasswordHasher _passwordHasher;
     private readonly TokenService _tokenService;
-    private readonly TestEmailSender _emailSender;
+    private readonly TestEventPublisher _eventPublisher;
     private readonly AuthController _controller;
 
     public AuthControllerTests()
@@ -49,14 +52,14 @@ public class AuthControllerTests : IDisposable
             .Build();
 
         _tokenService = new TokenService(config);
-        _emailSender = new TestEmailSender();
+        _eventPublisher = new TestEventPublisher();
 
         _controller = new AuthController(
             _context,
             _passwordHasher,
             _tokenService,
-            _emailSender,
-            NullLogger<AuthController>.Instance
+            NullLogger<AuthController>.Instance,
+            _eventPublisher
         );
     }
 
@@ -82,7 +85,11 @@ public class AuthControllerTests : IDisposable
         var user = await _context.Users.FirstOrDefaultAsync(u => u.Email == "newuser@example.com");
         Assert.NotNull(user);
         Assert.Equal(UserStatus.PendingConfirm, user.Status);
-        Assert.NotEmpty(_emailSender.SentEmails);
+        var emailEvent = _eventPublisher.PublishedEvents.OfType<EmailRequestedEvent>().SingleOrDefault();
+        Assert.NotNull(emailEvent);
+        Assert.Equal("ConfirmEmail", emailEvent.Template);
+        Assert.Equal("newuser@example.com", emailEvent.To);
+        Assert.True(emailEvent.Data.ContainsKey("confirmLink"));
 
         var token = await _context.UserTokens.FirstOrDefaultAsync(t => t.UserId == user.Id);
         Assert.NotNull(token);
@@ -331,8 +338,8 @@ public class AuthControllerTests : IDisposable
             _context,
             _passwordHasher,
             _tokenService,
-            _emailSender,
             NullLogger<AuthController>.Instance,
+            _eventPublisher,
             timeProvider: timeProvider
         );
 
@@ -377,8 +384,8 @@ public class AuthControllerTests : IDisposable
             _context,
             _passwordHasher,
             _tokenService,
-            _emailSender,
             NullLogger<AuthController>.Instance,
+            _eventPublisher,
             timeProvider: timeProvider
         );
 
@@ -553,13 +560,14 @@ public class AuthControllerTests : IDisposable
     }
 }
 
-public class TestEmailSender : IEmailSender
+public class TestEventPublisher : IEventPublisher
 {
-    public List<(string To, string Subject, string Body)> SentEmails { get; } = new();
+    public List<IntegrationEvent> PublishedEvents { get; } = new();
 
-    public Task SendEmailAsync(string to, string subject, string body, bool isHtml = true)
+    public Task PublishAsync<TEvent>(TEvent @event, string routingKey, CancellationToken cancellationToken = default)
+        where TEvent : IntegrationEvent
     {
-        SentEmails.Add((to, subject, body));
+        PublishedEvents.Add(@event);
         return Task.CompletedTask;
     }
 }

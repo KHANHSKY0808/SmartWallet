@@ -22,6 +22,10 @@ export class NotificationService {
     return this.http.get<PagedResult<NotificationDto>>(this.baseUrl, { params });
   }
 
+  getUnreadCount(): Observable<{ count: number }> {
+    return this.http.get<{ count: number }>(`${this.baseUrl}/unread-count`);
+  }
+
   markAsRead(id: string): Observable<{ message: string }> {
     return this.http.put<{ message: string }>(`${this.baseUrl}/${id}/read`, {});
   }

@@ -9,7 +9,7 @@ namespace IdentityService.Services;
 
 public interface ITokenService
 {
-    string GenerateAccessToken(User user, IEnumerable<string> roles);
+    string GenerateAccessToken(User user, IEnumerable<string> roles, IEnumerable<string>? permissions = null);
     RefreshToken GenerateRefreshToken(Guid userId);
     string GenerateRawToken();
     string HashToken(string rawToken);
@@ -24,7 +24,7 @@ public class TokenService : ITokenService
         _configuration = configuration;
     }
 
-    public string GenerateAccessToken(User user, IEnumerable<string> roles)
+    public string GenerateAccessToken(User user, IEnumerable<string> roles, IEnumerable<string>? permissions = null)
     {
         var signingKey = _configuration["Jwt:SigningKey"];
         if (string.IsNullOrWhiteSpace(signingKey))
@@ -39,19 +39,29 @@ public class TokenService : ITokenService
 
         var key = new SymmetricSecurityKey(Encoding.UTF8.GetBytes(signingKey));
         var credentials = new SigningCredentials(key, SecurityAlgorithms.HmacSha256);
+        var issuedAtUnix = DateTimeOffset.UtcNow.ToUnixTimeSeconds().ToString();
 
         var claims = new List<Claim>
         {
             new(JwtRegisteredClaimNames.Sub, user.Id.ToString()),
             new(ClaimTypes.NameIdentifier, user.Id.ToString()),
             new(JwtRegisteredClaimNames.Email, user.Email),
-            new(JwtRegisteredClaimNames.Jti, Guid.NewGuid().ToString())
+            new(JwtRegisteredClaimNames.Jti, Guid.NewGuid().ToString()),
+            new(JwtRegisteredClaimNames.Iat, issuedAtUnix, ClaimValueTypes.Integer64)
         };
 
         foreach (var role in roles)
         {
             claims.Add(new Claim(ClaimTypes.Role, role));
             claims.Add(new Claim("role", role));
+        }
+
+        if (permissions != null)
+        {
+            foreach (var perm in permissions.Distinct(StringComparer.OrdinalIgnoreCase))
+            {
+                claims.Add(new Claim("perm", perm));
+            }
         }
 
         var tokenDescriptor = new SecurityTokenDescriptor

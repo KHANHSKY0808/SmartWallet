@@ -83,7 +83,7 @@ public class WalletsController : ControllerBase
         return Ok(ToDto(wallet));
     }
 
-    [AllowAnonymous]
+    [Authorize(Policy = "SystemOnly")]
     [HttpGet("/internal/wallets/{id:guid}")]
     public async Task<IActionResult> GetInternalWallet(Guid id)
     {

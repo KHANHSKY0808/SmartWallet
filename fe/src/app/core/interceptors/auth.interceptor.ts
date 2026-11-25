@@ -51,8 +51,9 @@ export const authInterceptor: HttpInterceptorFn = (req, next) => {
             catchError(refreshError => {
               isRefreshing = false;
               refreshTokenSubject.next(null);
+              authService.sessionNotice.set('Phiên đăng nhập đã hết hiệu lực hoặc tài khoản đã bị khóa. Vui lòng đăng nhập lại.');
               authService.clearSession();
-              router.navigate(['/login']);
+              router.navigate(['/login'], { queryParams: { reason: 'revoked' } });
               return throwError(() => refreshError);
             })
           );
@@ -74,8 +75,9 @@ export const authInterceptor: HttpInterceptorFn = (req, next) => {
       }
 
       if (error.status === 401 && !isAuthUrl) {
+        authService.sessionNotice.set('Phiên đăng nhập đã hết hiệu lực hoặc tài khoản đã bị khóa. Vui lòng đăng nhập lại.');
         authService.clearSession();
-        router.navigate(['/login']);
+        router.navigate(['/login'], { queryParams: { reason: 'revoked' } });
       }
 
       return throwError(() => error);

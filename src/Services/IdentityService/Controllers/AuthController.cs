@@ -20,7 +20,6 @@ public class AuthController : ControllerBase
     private readonly IdentityDbContext _context;
     private readonly IPasswordHasher _passwordHasher;
     private readonly ITokenService _tokenService;
-    private readonly IEmailSender _emailSender;
     private readonly IEventPublisher? _eventPublisher;
     private readonly ILogger<AuthController> _logger;
     private readonly string _frontendBaseUrl;
@@ -30,7 +29,6 @@ public class AuthController : ControllerBase
         IdentityDbContext context,
         IPasswordHasher passwordHasher,
         ITokenService tokenService,
-        IEmailSender emailSender,
         ILogger<AuthController> logger,
         IEventPublisher? eventPublisher = null,
         IConfiguration? configuration = null,
@@ -39,7 +37,6 @@ public class AuthController : ControllerBase
         _context = context;
         _passwordHasher = passwordHasher;
         _tokenService = tokenService;
-        _emailSender = emailSender;
         _logger = logger;
         _eventPublisher = eventPublisher;
         _frontendBaseUrl = (configuration?["App:FrontendBaseUrl"] ?? "http://localhost:4200").TrimEnd('/');
@@ -63,10 +60,15 @@ public class AuthController : ControllerBase
         }
 
         var passwordHash = _passwordHasher.HashPassword(request.Password);
+        var fullName = string.IsNullOrWhiteSpace(request.FullName)
+            ? normalizedEmail.Split('@')[0]
+            : request.FullName.Trim();
+
         var user = new User
         {
             Id = Guid.NewGuid(),
             Email = normalizedEmail,
+            FullName = fullName,
             PasswordHash = passwordHash,
             Status = UserStatus.PendingConfirm,
             CreatedAt = DateTime.UtcNow,
@@ -94,26 +96,39 @@ public class AuthController : ControllerBase
         _context.UserTokens.Add(userToken);
         await _context.SaveChangesAsync();
 
-        // Gửi email xác nhận
+        // D62: IdentityService không gửi SMTP trực tiếp; chỉ phát EmailRequestedEvent sang NotificationService
         var confirmLink = $"{_frontendBaseUrl}/confirm-email?token={rawToken}";
-        var emailBody = $@"
-            <h2>Chào mừng bạn đến với SmartWallet!</h2>
-            <p>Vui lòng click vào liên kết bên dưới để kích hoạt tài khoản của bạn (liên kết có hiệu lực trong 24 giờ):</p>
-            <p><a href='{confirmLink}' style='padding: 10px 20px; background-color: #2563eb; color: white; text-decoration: none; border-radius: 5px;'>Kích hoạt tài khoản</a></p>
-            <p>Hoặc truy cập URL: {confirmLink}</p>";
+        _logger.LogInformation("Prepared ConfirmEmail event for UserId {UserId} with link base {BaseUrl}/confirm-email?token=[REDACTED]",
+            user.Id, _frontendBaseUrl);
 
-        await _emailSender.SendEmailAsync(user.Email, "SmartWallet - Xác nhận đăng ký tài khoản", emailBody);
-
-        // Publish UserRegisteredEvent lên RabbitMQ
         if (_eventPublisher != null)
         {
+            try
+            {
+                await _eventPublisher.PublishAsync(new EmailRequestedEvent
+                {
+                    UserId = user.Id,
+                    To = user.Email,
+                    Template = "ConfirmEmail",
+                    Data = new Dictionary<string, string>
+                    {
+                        ["confirmLink"] = confirmLink,
+                        ["fullName"] = fullName
+                    }
+                }, "identity.email_requested");
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex, "Failed to publish EmailRequestedEvent for UserId {UserId}", user.Id);
+            }
+
             try
             {
                 var userRegisteredEvent = new UserRegisteredEvent
                 {
                     UserId = user.Id,
                     Email = user.Email,
-                    FullName = string.IsNullOrWhiteSpace(request.FullName) ? user.Email.Split('@')[0] : request.FullName.Trim(),
+                    FullName = fullName,
                     DefaultCurrency = "VND"
                 };
                 await _eventPublisher.PublishAsync(userRegisteredEvent, "user.registered");
@@ -171,10 +186,11 @@ public class AuthController : ControllerBase
         var user = await _context.Users
             .Include(u => u.UserRoles)
             .ThenInclude(ur => ur.Role)
+            .ThenInclude(r => r.RolePermissions)
+            .ThenInclude(rp => rp.Permission)
             .FirstOrDefaultAsync(u => u.Email.ToLower() == normalizedEmail);
 
         var now = _timeProvider.GetUtcNow().UtcDateTime;
-        // H3/D10: Xác thực mật khẩu để chống User Enumeration & Timing Attack (N9 / S08)
         var passwordHashToVerify = user?.PasswordHash ?? DummyPasswordHash;
         var isPasswordValid = _passwordHasher.VerifyPassword(request.Password, passwordHashToVerify);
         var isValidPassword = user != null && isPasswordValid;
@@ -183,11 +199,9 @@ public class AuthController : ControllerBase
         {
             if (user != null)
             {
-                // Nếu tài khoản đang trong thời gian bị khóa, không tăng FailedLoginAttempts, không đẩy lùi LockoutEnd (H-05)
                 var isCurrentlyLocked = user.LockoutEnd.HasValue && user.LockoutEnd.Value > now;
                 if (!isCurrentlyLocked)
                 {
-                    // Nếu thời gian khóa cũ đã hết, reset
                     if (user.LockoutEnd.HasValue && user.LockoutEnd.Value <= now)
                     {
                         user.LockoutEnd = null;
@@ -205,11 +219,9 @@ public class AuthController : ControllerBase
                 }
             }
 
-            // D10 / K1: Luôn trả 401 cùng body từng byte, không trả remainingAttempts, không tiết lộ user có tồn tại hay không
             return Unauthorized(new { message = "Email hoặc mật khẩu không chính xác" });
         }
 
-        // Mật khẩu đúng -> Kiểm tra các trạng thái tài khoản
         if (user!.LockoutEnd.HasValue)
         {
             if (user.LockoutEnd.Value > now)
@@ -223,7 +235,6 @@ public class AuthController : ControllerBase
             }
             else
             {
-                // Khóa đã hết hạn -> mở khóa
                 user.LockoutEnd = null;
                 user.FailedLoginAttempts = 0;
             }
@@ -234,12 +245,16 @@ public class AuthController : ControllerBase
             return StatusCode(403, new { message = "Tài khoản chưa được kích hoạt. Vui lòng kiểm tra email để kích hoạt tài khoản." });
         }
 
+        // D64 / AD-04: Bị Admin khóa với đúng mật khẩu trả 403 ACCOUNT_DISABLED
         if (user.Status == UserStatus.Locked)
         {
-            return StatusCode(423, new { message = "Tài khoản đã bị vô hiệu hóa bởi quản trị viên." });
+            return StatusCode(403, new
+            {
+                code = "ACCOUNT_DISABLED",
+                message = "Tài khoản đã bị vô hiệu hóa bởi quản trị viên."
+            });
         }
 
-        // Đăng nhập thành công -> Reset số lần đăng nhập sai
         user.FailedLoginAttempts = 0;
         user.LockoutEnd = null;
         await _context.SaveChangesAsync();
@@ -251,7 +266,13 @@ public class AuthController : ControllerBase
             roles.Add("User");
         }
 
-        var accessToken = _tokenService.GenerateAccessToken(user, roles);
+        var permissions = user.UserRoles
+            .SelectMany(ur => ur.Role.RolePermissions)
+            .Select(rp => rp.Permission.Code)
+            .Distinct()
+            .ToList();
+
+        var accessToken = _tokenService.GenerateAccessToken(user, roles, permissions);
         var refreshToken = _tokenService.GenerateRefreshToken(user.Id);
 
         _context.RefreshTokens.Add(refreshToken);
@@ -283,6 +304,8 @@ public class AuthController : ControllerBase
             .Include(r => r.User)
             .ThenInclude(u => u.UserRoles)
             .ThenInclude(ur => ur.Role)
+            .ThenInclude(ro => ro.RolePermissions)
+            .ThenInclude(rp => rp.Permission)
             .FirstOrDefaultAsync(r => r.Token == request.RefreshToken && !r.IsRevoked);
 
         if (token == null || token.ExpiresAt < DateTime.UtcNow || token.User.Status != UserStatus.Active)
@@ -290,7 +313,6 @@ public class AuthController : ControllerBase
             return Unauthorized(new { message = "RefreshToken không hợp lệ hoặc đã hết hạn" });
         }
 
-        // Thu hồi token cũ
         token.IsRevoked = true;
 
         var roles = token.User.UserRoles.Select(ur => ur.Role.Name).ToList();
@@ -300,7 +322,13 @@ public class AuthController : ControllerBase
             roles.Add("User");
         }
 
-        var newAccessToken = _tokenService.GenerateAccessToken(token.User, roles);
+        var permissions = token.User.UserRoles
+            .SelectMany(ur => ur.Role.RolePermissions)
+            .Select(rp => rp.Permission.Code)
+            .Distinct()
+            .ToList();
+
+        var newAccessToken = _tokenService.GenerateAccessToken(token.User, roles, permissions);
         var newRefreshToken = _tokenService.GenerateRefreshToken(token.User.Id);
 
         _context.RefreshTokens.Add(newRefreshToken);
@@ -360,7 +388,7 @@ public class AuthController : ControllerBase
                 UserId = user.Id,
                 Type = UserTokenType.PasswordReset,
                 TokenHash = tokenHash,
-                ExpiresAt = DateTime.UtcNow.AddMinutes(30), // Link token 30 phút theo D6
+                ExpiresAt = DateTime.UtcNow.AddMinutes(30),
                 CreatedAt = DateTime.UtcNow
             };
 
@@ -368,18 +396,28 @@ public class AuthController : ControllerBase
             await _context.SaveChangesAsync();
 
             var resetLink = $"{_frontendBaseUrl}/reset-password?token={rawToken}";
-            var emailBody = $@"
-                <h2>Yêu cầu đặt lại mật khẩu</h2>
-                <p>Bạn vừa yêu cầu đặt lại mật khẩu cho tài khoản SmartWallet.</p>
-                <p>Vui lòng click vào liên kết bên dưới để đặt mật khẩu mới (liên kết có hiệu lực trong 30 phút):</p>
-                <p><a href='{resetLink}' style='padding: 10px 20px; background-color: #2563eb; color: white; text-decoration: none; border-radius: 5px;'>Đặt lại mật khẩu</a></p>
-                <p>Hoặc truy cập URL: {resetLink}</p>
-                <p>Nếu bạn không gửi yêu cầu này, vui lòng bỏ qua email.</p>";
-
-            await _emailSender.SendEmailAsync(user.Email, "SmartWallet - Đặt lại mật khẩu", emailBody);
+            if (_eventPublisher != null)
+            {
+                try
+                {
+                    await _eventPublisher.PublishAsync(new EmailRequestedEvent
+                    {
+                        UserId = user.Id,
+                        To = user.Email,
+                        Template = "ResetPassword",
+                        Data = new Dictionary<string, string>
+                        {
+                            ["resetLink"] = resetLink
+                        }
+                    }, "identity.email_requested");
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogWarning(ex, "Failed to publish ResetPassword EmailRequestedEvent for UserId {UserId}", user.Id);
+                }
+            }
         }
 
-        // Luôn trả về 200 để chống user enumeration
         return Ok(new { message = "Nếu email tồn tại trong hệ thống, hướng dẫn đặt lại mật khẩu đã được gửi." });
     }
 
@@ -405,7 +443,6 @@ public class AuthController : ControllerBase
         userToken.User.PasswordHash = _passwordHasher.HashPassword(request.NewPassword);
         userToken.User.UpdatedAt = DateTime.UtcNow;
 
-        // Thu hồi toàn bộ RefreshToken cũ của user
         var activeTokens = await _context.RefreshTokens
             .Where(r => r.UserId == userToken.UserId && !r.IsRevoked)
             .ToListAsync();
@@ -449,7 +486,6 @@ public class AuthController : ControllerBase
         user.PasswordHash = _passwordHasher.HashPassword(request.NewPassword);
         user.UpdatedAt = DateTime.UtcNow;
 
-        // Thu hồi toàn bộ RefreshToken cũ của user khi đổi mật khẩu (M1)
         var activeTokens = await _context.RefreshTokens
             .Where(r => r.UserId == user.Id && !r.IsRevoked)
             .ToListAsync();

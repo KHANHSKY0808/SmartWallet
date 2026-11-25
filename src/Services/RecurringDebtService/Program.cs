@@ -34,14 +34,14 @@ builder.Services.AddHttpClient<IWalletServiceClient, WalletServiceClient>(client
     var url = builder.Configuration["Services:WalletService:Url"] ?? "http://localhost:8003";
     client.BaseAddress = new Uri(url);
     client.Timeout = TimeSpan.FromSeconds(3);
-});
+}).AddHttpMessageHandler(sp => new SystemTokenDelegatingHandler(sp.GetRequiredService<IConfiguration>(), "RecurringDebtService"));
 
 builder.Services.AddHttpClient<ICategoryServiceClient, CategoryServiceClient>(client =>
 {
     var url = builder.Configuration["Services:CategoryService:Url"] ?? "http://localhost:8005";
     client.BaseAddress = new Uri(url);
     client.Timeout = TimeSpan.FromSeconds(3);
-});
+}).AddHttpMessageHandler(sp => new SystemTokenDelegatingHandler(sp.GetRequiredService<IConfiguration>(), "RecurringDebtService"));
 
 // Cấu hình Event Publisher & Consumers
 builder.Services.AddSingleton<IEventPublisher, RabbitMqEventPublisher>();

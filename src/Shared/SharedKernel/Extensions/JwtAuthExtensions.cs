@@ -1,3 +1,4 @@
+using System.Security.Claims;
 using System.Text;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.Extensions.Configuration;
@@ -6,8 +7,39 @@ using Microsoft.IdentityModel.Tokens;
 
 namespace SharedKernel.Extensions;
 
+/// <summary>7 quyền RBAC chuẩn theo D65.</summary>
+public static class AppPermissions
+{
+    public const string UsersRead = "users.read";
+    public const string UsersLock = "users.lock";
+    public const string UsersRolesWrite = "users.roles.write";
+    public const string AuditRead = "audit.read";
+    public const string RatesWrite = "rates.write";
+    public const string CategoriesDefaultsWrite = "categories.defaults.write";
+    public const string HealthRead = "health.read";
+
+    public static readonly IReadOnlyList<string> All =
+    [
+        UsersRead,
+        UsersLock,
+        UsersRolesWrite,
+        AuditRead,
+        RatesWrite,
+        CategoriesDefaultsWrite,
+        HealthRead
+    ];
+}
+
 public static class JwtAuthExtensions
 {
+    public static bool HasPermission(ClaimsPrincipal user, string permission)
+    {
+        return user.IsInRole("Admin")
+            || user.HasClaim("role", "Admin")
+            || user.HasClaim(ClaimTypes.Role, "Admin")
+            || user.HasClaim("perm", permission);
+    }
+
     public static IServiceCollection AddJwtAuthentication(
         this IServiceCollection services,
         IConfiguration configuration)
@@ -59,6 +91,12 @@ public static class JwtAuthExtensions
             options.AddPolicy("UserOnly", policy => policy.RequireRole("User"));
             options.AddPolicy("SystemOnly", policy => policy.RequireRole("System"));
             options.AddPolicy("Authenticated", policy => policy.RequireAuthenticatedUser());
+
+            foreach (var perm in AppPermissions.All)
+            {
+                var p = perm;
+                options.AddPolicy(p, policy => policy.RequireAssertion(ctx => HasPermission(ctx.User, p)));
+            }
         });
 
         return services;

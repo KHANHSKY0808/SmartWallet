@@ -3,6 +3,7 @@ using SharedKernel.Extensions;
 using SharedKernel.Messaging;
 using NotificationService.Consumers;
 using NotificationService.Data;
+using NotificationService.Services;
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -21,12 +22,21 @@ builder.Services.AddDbContext<NotificationDbContext>(options =>
     options.UseSqlite(connectionString);
 });
 
-// Đăng ký Consumer thông báo ngân sách và mục tiêu hoàn thành
+// D62: Email Queue & SMTP Dispatcher
+builder.Services.AddSingleton(TimeProvider.System);
+builder.Services.AddSingleton<ISmtpEmailClient, MailKitSmtpEmailClient>();
+builder.Services.AddSingleton<IEmailDispatchSignal, EmailDispatchSignal>();
+builder.Services.AddScoped<EmailDispatcherService>();
+builder.Services.AddHostedService<EmailDispatchWorker>();
+
+// Đăng ký Consumers
 builder.Services.AddHostedService<BudgetThresholdReachedConsumer>();
 builder.Services.AddHostedService<GoalCompletedConsumer>();
 builder.Services.AddHostedService<DueReminderConsumer>();
 builder.Services.AddHostedService<RecurringTransactionFailedConsumer>();
 builder.Services.AddHostedService<ExportCompletedConsumer>();
+builder.Services.AddHostedService<MoneyTransferredConsumer>();
+builder.Services.AddHostedService<EmailRequestedConsumer>();
 
 // Khai báo topology queue thông báo
 try
@@ -40,6 +50,8 @@ try
     RabbitMqTopology.DeclareConsumerQueue(ch, "notification.due-reminder", "reminder.due");
     RabbitMqTopology.DeclareConsumerQueue(ch, "notification.recurring-failed", "recurring.failed");
     RabbitMqTopology.DeclareConsumerQueue(ch, "notification.export-completed", "report.export_completed");
+    RabbitMqTopology.DeclareConsumerQueue(ch, "notification.money-transferred", "wallet.transferred");
+    RabbitMqTopology.DeclareConsumerQueue(ch, "notification.email-requested", "identity.email_requested");
 }
 catch (Exception)
 {

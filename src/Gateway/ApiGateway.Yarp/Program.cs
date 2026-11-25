@@ -1,7 +1,10 @@
 using System.Diagnostics;
+using System.IdentityModel.Tokens.Jwt;
+using System.Security.Claims;
 using System.Text.Json;
 using Microsoft.Extensions.Caching.Memory;
 using SharedKernel.Extensions;
+using StackExchange.Redis;
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -17,6 +20,18 @@ builder.Services.AddCors(options =>
               .AllowAnyHeader()
               .AllowCredentials();
     });
+});
+
+// D64: Redis connection cho kiểm tra khóa tức thì (fail fast trong 500ms khi Redis tắt)
+var redisConnStr = builder.Configuration.GetConnectionString("Redis") ?? "localhost:6379";
+builder.Services.AddSingleton<IConnectionMultiplexer>(_ =>
+{
+    var opts = ConfigurationOptions.Parse(redisConnStr);
+    opts.AbortOnConnectFail = false;
+    opts.ConnectTimeout = 500;
+    opts.SyncTimeout = 500;
+    opts.AsyncTimeout = 500;
+    return ConnectionMultiplexer.Connect(opts);
 });
 
 builder.Services.AddJwtAuthentication(builder.Configuration);
@@ -46,6 +61,82 @@ app.Use(async (context, next) =>
 
 app.UseCors("AllowFrontend");
 app.UseAuthentication();
+
+// D64 & D65: Chặn token System từ ngoài + kiểm tra khóa/valid-after qua Redis (fail-closed admin / fail-open user)
+app.Use(async (context, next) =>
+{
+    if (context.User.Identity?.IsAuthenticated == true)
+    {
+        // D65 / RB-05: Từ chối mọi request từ ngoài mang token role=System
+        if (context.User.IsInRole("System") || context.User.HasClaim("role", "System") || context.User.HasClaim(ClaimTypes.Role, "System"))
+        {
+            context.Response.StatusCode = StatusCodes.Status401Unauthorized;
+            await context.Response.WriteAsJsonAsync(new { code = "SYSTEM_TOKEN_REJECTED", message = "Service token không được phép truy cập qua Gateway." });
+            return;
+        }
+
+        var path = context.Request.Path;
+        var isAdminOrAuditRoute = path.StartsWithSegments("/api/admin") || path.StartsWithSegments("/api/audit");
+        var userId = context.User.FindFirstValue(ClaimTypes.NameIdentifier) ?? context.User.FindFirstValue("sub");
+
+        if (!string.IsNullOrWhiteSpace(userId))
+        {
+            var redis = context.RequestServices.GetRequiredService<IConnectionMultiplexer>();
+            var logger = context.RequestServices.GetRequiredService<ILoggerFactory>().CreateLogger("GatewaySessionGuard");
+
+            try
+            {
+                if (!redis.IsConnected)
+                {
+                    logger.LogWarning("Redis đang mất kết nối khi kiểm tra phiên cho {Path} (Admin fail-closed, User fail-open).", path);
+                    if (isAdminOrAuditRoute)
+                    {
+                        context.Response.StatusCode = StatusCodes.Status503ServiceUnavailable;
+                        await context.Response.WriteAsJsonAsync(new { code = "REDIS_UNAVAILABLE", message = "Hệ thống xác thực quản trị tạm thời gián đoạn." });
+                        return;
+                    }
+                }
+                else
+                {
+                    var db = redis.GetDatabase();
+                    var locked = await db.KeyExistsAsync($"auth:locked:{userId}");
+                    if (locked)
+                    {
+                        context.Response.StatusCode = StatusCodes.Status401Unauthorized;
+                        await context.Response.WriteAsJsonAsync(new { code = "ACCOUNT_LOCKED", message = "Phiên đăng nhập đã bị thu hồi do tài khoản bị khóa." });
+                        return;
+                    }
+
+                    var validAfterRaw = await db.StringGetAsync($"auth:valid-after:{userId}");
+                    if (validAfterRaw.HasValue && long.TryParse(validAfterRaw.ToString(), out var validAfter))
+                    {
+                        var iatClaim = context.User.FindFirstValue(JwtRegisteredClaimNames.Iat);
+                        if (!long.TryParse(iatClaim, out var iat) || iat <= validAfter)
+                        {
+                            context.Response.StatusCode = StatusCodes.Status401Unauthorized;
+                            await context.Response.WriteAsJsonAsync(new { code = "TOKEN_REVOKED", message = "Phiên đăng nhập đã hết hiệu lực. Vui lòng đăng nhập lại." });
+                            return;
+                        }
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                logger.LogWarning(ex, "Redis không khả dụng khi kiểm tra phiên cho {Path} (Admin fail-closed, User fail-open).", path);
+                if (isAdminOrAuditRoute)
+                {
+                    context.Response.StatusCode = StatusCodes.Status503ServiceUnavailable;
+                    await context.Response.WriteAsJsonAsync(new { code = "REDIS_UNAVAILABLE", message = "Hệ thống xác thực quản trị tạm thời gián đoạn." });
+                    return;
+                }
+                // User route: fail-open (D64)
+            }
+        }
+    }
+
+    await next();
+});
+
 app.UseAuthorization();
 
 // Gateway health (giữ "healthy" viết thường theo test_G01, không lộ /metrics qua Gateway theo D61 / HM-05)
@@ -137,7 +228,7 @@ app.MapGet("/api/admin/health", async (
     var results = await Task.WhenAll(tasks);
     cache.Set<object>(cacheKey, results, TimeSpan.FromSeconds(1)); // Cache 1s (<= 10s D61, HM-04 <= 30s)
     return Results.Ok(results);
-}).RequireAuthorization("AdminOnly");
+}).RequireAuthorization(AppPermissions.HealthRead);
 
 app.MapReverseProxy();
 

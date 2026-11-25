@@ -20,6 +20,11 @@
 
   <ItemGroup>
     <ProjectReference Include="..\..\src\Services\IdentityService\IdentityService.csproj" />
+    <ProjectReference Include="..\..\src\Services\CategoryService\CategoryService.csproj" />
+    <ProjectReference Include="..\..\src\Services\WalletService\WalletService.csproj" />
+    <ProjectReference Include="..\..\src\Services\UserProfileService\UserProfileService.csproj" />
+    <ProjectReference Include="..\..\src\Services\FileService\FileService.csproj" />
+    <ProjectReference Include="..\..\src\Services\TransactionService\TransactionService.csproj" />
   </ItemGroup>
 
 </Project>

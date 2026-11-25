@@ -91,7 +91,7 @@ public class CategoriesController : ControllerBase
         return Ok(ToDto(category));
     }
 
-    [AllowAnonymous]
+    [Authorize(Policy = "SystemOnly")]
     [HttpGet("/internal/categories/{id:guid}")]
     public async Task<IActionResult> GetInternalCategory(Guid id)
     {

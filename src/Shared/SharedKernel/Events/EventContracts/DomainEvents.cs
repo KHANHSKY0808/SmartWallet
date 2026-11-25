@@ -176,5 +176,37 @@ public record ExportCompletedEvent : IntegrationEvent
     public string Format { get; init; } = "xlsx"; // "xlsx" | "pdf"
 }
 
+/// <summary>D62: Yêu cầu gửi email bất đồng bộ từ IdentityService/services qua NotificationService.</summary>
+public record EmailRequestedEvent : IntegrationEvent
+{
+    public Guid? UserId { get; init; }
+    public string To { get; init; } = string.Empty;
+    public string Template { get; init; } = string.Empty; // "ConfirmEmail" | "ResetPassword" | "DueReminder"
+    public Dictionary<string, string> Data { get; init; } = new();
+}
+
+/// <summary>D63: Admin khóa tài khoản người dùng.</summary>
+public record UserLockedEvent : IntegrationEvent
+{
+    public Guid UserId { get; init; }
+    public Guid ActorUserId { get; init; }
+    public string? Reason { get; init; }
+}
+
+/// <summary>D63: Admin mở khóa tài khoản người dùng.</summary>
+public record UserUnlockedEvent : IntegrationEvent
+{
+    public Guid UserId { get; init; }
+    public Guid ActorUserId { get; init; }
+}
+
+/// <summary>D63: Admin thay đổi vai trò của người dùng.</summary>
+public record UserRolesChangedEvent : IntegrationEvent
+{
+    public Guid UserId { get; init; }
+    public Guid ActorUserId { get; init; }
+    public List<string> Roles { get; init; } = new();
+}
+
 
 

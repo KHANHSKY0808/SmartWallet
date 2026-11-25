@@ -28,21 +28,21 @@ builder.Services.AddHttpClient<IWalletClient, WalletClient>(client =>
     var url = builder.Configuration["Services:WalletService:Url"] ?? "http://localhost:8003";
     client.BaseAddress = new Uri(url);
     client.Timeout = TimeSpan.FromSeconds(3);
-});
+}).AddHttpMessageHandler(sp => new SystemTokenDelegatingHandler(sp.GetRequiredService<IConfiguration>(), "TransactionService"));
 
 builder.Services.AddHttpClient<ICategoryClient, CategoryClient>(client =>
 {
     var url = builder.Configuration["Services:CategoryService:Url"] ?? "http://localhost:8005";
     client.BaseAddress = new Uri(url);
     client.Timeout = TimeSpan.FromSeconds(3);
-});
+}).AddHttpMessageHandler(sp => new SystemTokenDelegatingHandler(sp.GetRequiredService<IConfiguration>(), "TransactionService"));
 
 builder.Services.AddHttpClient<IFileServiceClient, FileServiceClient>(client =>
 {
     var url = builder.Configuration["Services:FileService:Url"] ?? "http://localhost:8012";
     client.BaseAddress = new Uri(url);
     client.Timeout = TimeSpan.FromSeconds(3);
-});
+}).AddHttpMessageHandler(sp => new SystemTokenDelegatingHandler(sp.GetRequiredService<IConfiguration>(), "TransactionService"));
 
 // RabbitMQ Event Publisher
 builder.Services.AddSingleton<IEventPublisher, RabbitMqEventPublisher>();

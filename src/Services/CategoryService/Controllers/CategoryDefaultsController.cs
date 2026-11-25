@@ -6,11 +6,13 @@ using CategoryService.Data;
 using CategoryService.DTOs;
 using CategoryService.Models;
 
+using SharedKernel.Extensions;
+
 namespace CategoryService.Controllers;
 
 [ApiController]
 [Route("api/categories/defaults")]
-[Authorize(Roles = "Admin")]
+[Authorize(Policy = AppPermissions.CategoriesDefaultsWrite)]
 public class CategoryDefaultsController : ControllerBase
 {
     private static readonly Regex ColorRegex = new(@"^#[0-9a-fA-F]{6}$", RegexOptions.Compiled);

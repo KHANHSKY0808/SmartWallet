@@ -11,6 +11,7 @@ describe('NotificationBellComponent (F-04)', () => {
   let fixture: ComponentFixture<NotificationBellComponent>;
   let notificationServiceMock: {
     getNotifications: ReturnType<typeof vi.fn>;
+    getUnreadCount: ReturnType<typeof vi.fn>;
     markAsRead: ReturnType<typeof vi.fn>;
     markAllAsRead: ReturnType<typeof vi.fn>;
   };
@@ -41,6 +42,7 @@ describe('NotificationBellComponent (F-04)', () => {
       getNotifications: vi.fn().mockReturnValue(
         of({ items: mockNotifications, totalItems: 2, page: 1, pageSize: 20, totalPages: 1 })
       ),
+      getUnreadCount: vi.fn().mockReturnValue(of({ count: 1 })),
       markAsRead: vi.fn().mockReturnValue(of({ message: 'OK' })),
       markAllAsRead: vi.fn().mockReturnValue(of({ message: 'OK', count: 1 }))
     };

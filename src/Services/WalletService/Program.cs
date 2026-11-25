@@ -29,7 +29,7 @@ builder.Services.AddHttpClient<IUserProfileClient, UserProfileClient>(client =>
     var url = builder.Configuration["Services:UserProfileService:Url"] ?? "http://localhost:8002";
     client.BaseAddress = new Uri(url);
     client.Timeout = TimeSpan.FromSeconds(3); // D8: timeout 3s
-});
+}).AddHttpMessageHandler(sp => new SystemTokenDelegatingHandler(sp.GetRequiredService<IConfiguration>(), "WalletService"));
 
 builder.Services.AddHttpClient<ISavingGoalClient, SavingGoalClient>(client =>
 {

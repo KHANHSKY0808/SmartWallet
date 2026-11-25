@@ -65,6 +65,8 @@ Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "RecurringDebtService.Tests"
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "ReportService.Tests", "tests\ReportService.Tests\ReportService.Tests.csproj", "{7AC0E75E-1845-4C75-811B-2536426829FC}"
 EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "AuditService.Tests", "tests\AuditService.Tests\AuditService.Tests.csproj", "{531F296F-F711-474C-AC0C-40E0B3A6D34F}"
+EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
 		Debug|Any CPU = Debug|Any CPU
@@ -387,6 +389,18 @@ Global
 		{7AC0E75E-1845-4C75-811B-2536426829FC}.Release|x64.Build.0 = Release|Any CPU
 		{7AC0E75E-1845-4C75-811B-2536426829FC}.Release|x86.ActiveCfg = Release|Any CPU
 		{7AC0E75E-1845-4C75-811B-2536426829FC}.Release|x86.Build.0 = Release|Any CPU
+		{531F296F-F711-474C-AC0C-40E0B3A6D34F}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{531F296F-F711-474C-AC0C-40E0B3A6D34F}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{531F296F-F711-474C-AC0C-40E0B3A6D34F}.Debug|x64.ActiveCfg = Debug|Any CPU
+		{531F296F-F711-474C-AC0C-40E0B3A6D34F}.Debug|x64.Build.0 = Debug|Any CPU
+		{531F296F-F711-474C-AC0C-40E0B3A6D34F}.Debug|x86.ActiveCfg = Debug|Any CPU
+		{531F296F-F711-474C-AC0C-40E0B3A6D34F}.Debug|x86.Build.0 = Debug|Any CPU
+		{531F296F-F711-474C-AC0C-40E0B3A6D34F}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{531F296F-F711-474C-AC0C-40E0B3A6D34F}.Release|Any CPU.Build.0 = Release|Any CPU
+		{531F296F-F711-474C-AC0C-40E0B3A6D34F}.Release|x64.ActiveCfg = Release|Any CPU
+		{531F296F-F711-474C-AC0C-40E0B3A6D34F}.Release|x64.Build.0 = Release|Any CPU
+		{531F296F-F711-474C-AC0C-40E0B3A6D34F}.Release|x86.ActiveCfg = Release|Any CPU
+		{531F296F-F711-474C-AC0C-40E0B3A6D34F}.Release|x86.Build.0 = Release|Any CPU
 	EndGlobalSection
 	GlobalSection(SolutionProperties) = preSolution
 		HideSolutionNode = FALSE
@@ -421,5 +435,6 @@ Global
 		{DF03DC8F-0188-44BD-B8B2-FE95E4ED77AE} = {0AB3BF05-4346-4AA6-1389-037BE0695223}
 		{9F992B3D-8531-4D37-9957-7D6F5C32EF41} = {0AB3BF05-4346-4AA6-1389-037BE0695223}
 		{7AC0E75E-1845-4C75-811B-2536426829FC} = {0AB3BF05-4346-4AA6-1389-037BE0695223}
+		{531F296F-F711-474C-AC0C-40E0B3A6D34F} = {0AB3BF05-4346-4AA6-1389-037BE0695223}
 	EndGlobalSection
 EndGlobal

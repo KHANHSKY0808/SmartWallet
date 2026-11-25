@@ -4,7 +4,6 @@ import { Observable, tap } from 'rxjs';
 import {
   AuthResponse,
   ChangePasswordRequest,
-  ForgotPasswordRequest,
   LoginRequest,
   RegisterRequest,
   ResetPasswordRequest,
@@ -22,7 +21,10 @@ export class AuthService {
 
   currentUser = signal<UserInfoDto | null>(this.getStoredUser());
   currentUserRole = signal<string | null>(this.getStoredRole());
+  currentUserRoles = signal<string[]>(this.parseTokenRoles(this.getAccessToken()));
+  currentUserPermissions = signal<string[]>(this.parseTokenPermissions(this.getAccessToken()));
   isLoggedIn = signal<boolean>(this.isAuthenticated());
+  sessionNotice = signal<string>('');
 
   constructor(private http: HttpClient) {}
 
@@ -37,6 +39,7 @@ export class AuthService {
   }
 
   login(request: LoginRequest): Observable<AuthResponse> {
+    this.sessionNotice.set('');
     return this.http.post<AuthResponse>(`${this.apiUrl}/login`, request).pipe(
       tap(response => {
         const primaryRole = response.user.roles.length > 0 ? response.user.roles[0] : 'User';
@@ -86,6 +89,8 @@ export class AuthService {
       this.currentUser.set(user);
     }
     this.currentUserRole.set(role);
+    this.currentUserRoles.set(this.parseTokenRoles(accessToken, user?.roles));
+    this.currentUserPermissions.set(this.parseTokenPermissions(accessToken));
     this.isLoggedIn.set(true);
   }
 
@@ -96,7 +101,17 @@ export class AuthService {
     localStorage.removeItem(this.userKey);
     this.currentUser.set(null);
     this.currentUserRole.set(null);
+    this.currentUserRoles.set([]);
+    this.currentUserPermissions.set([]);
     this.isLoggedIn.set(false);
+  }
+
+  hasPermission(permission: string): boolean {
+    if (!this.isAuthenticated()) return false;
+    const role = this.currentUserRole();
+    const roles = this.currentUserRoles();
+    if (role === 'Admin' || roles.includes('Admin')) return true;
+    return this.currentUserPermissions().includes(permission);
   }
 
   getAccessToken(): string | null {
@@ -127,5 +142,34 @@ export class AuthService {
 
   private getStoredRole(): string | null {
     return localStorage.getItem('user_role');
+  }
+
+  private decodePayload(token: string | null): Record<string, unknown> | null {
+    if (!token) return null;
+    const parts = token.split('.');
+    if (parts.length < 2) return null;
+    try {
+      const b64 = parts[1].replace(/-/g, '+').replace(/_/g, '/');
+      const padded = b64 + '='.repeat((4 - (b64.length % 4)) % 4);
+      return JSON.parse(atob(padded)) as Record<string, unknown>;
+    } catch {
+      return null;
+    }
+  }
+
+  private parseTokenPermissions(token: string | null): string[] {
+    const payload = this.decodePayload(token);
+    const perm = payload?.['perm'];
+    if (Array.isArray(perm)) return perm.map(String);
+    if (typeof perm === 'string') return [perm];
+    return [];
+  }
+
+  private parseTokenRoles(token: string | null, fallback?: string[]): string[] {
+    const payload = this.decodePayload(token);
+    const role = payload?.['role'];
+    if (Array.isArray(role)) return role.map(String);
+    if (typeof role === 'string') return [role];
+    return fallback ?? (this.getStoredRole() ? [this.getStoredRole()!] : []);
   }
 }

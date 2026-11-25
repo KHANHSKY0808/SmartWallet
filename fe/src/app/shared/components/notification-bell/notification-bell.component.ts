@@ -24,7 +24,7 @@ import { NotificationDto } from '../../../core/models/notification.models';
       <!-- Dropdown Popover -->
       <div *ngIf="isOpen()" 
            class="notification-dropdown"
-           style="position: absolute; right: 0; top: calc(100% + 8px); width: 340px; background: white; border: 1px solid #e2e8f0; border-radius: 10px; box-shadow: 0 10px 25px -5px rgba(0,0,0,0.15); z-index: 1000; overflow: hidden;">
+           style="position: absolute; right: 0; top: calc(100% + 8px); width: min(340px, calc(100vw - 1.5rem)); background: white; border: 1px solid #e2e8f0; border-radius: 10px; box-shadow: 0 10px 25px -5px rgba(0,0,0,0.15); z-index: 1000; overflow: hidden;">
         
         <div style="display: flex; justify-content: space-between; align-items: center; padding: 0.75rem 1rem; border-bottom: 1px solid #f1f5f9; background: #f8fafc;">
           <h4 style="margin: 0; font-size: 0.95rem; font-weight: 700; color: #0f172a;">🔔 Thông báo</h4>
@@ -80,12 +80,23 @@ export class NotificationBellComponent implements OnInit {
   }
 
   loadNotifications() {
+    this.notificationService.getUnreadCount().subscribe({
+      next: (r) => {
+        if (typeof r?.count === 'number') {
+          this.unreadCount.set(r.count);
+        }
+      },
+      error: () => {}
+    });
+
     this.notificationService.getNotifications({ page: 1, pageSize: 20 }).subscribe({
       next: (res) => {
-        // F-04: Sắp xếp mới nhất trước
+        // F-04 / F-01: Sắp xếp mới nhất trước
         const items = res?.items || [];
         this.notifications.set(items);
-        this.unreadCount.set(items.filter(n => !n.isRead).length);
+        if (items.length > 0 && this.unreadCount() === 0) {
+          this.unreadCount.set(items.filter(n => !n.isRead).length);
+        }
       },
       error: () => {}
     });

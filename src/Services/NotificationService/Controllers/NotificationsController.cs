@@ -46,6 +46,16 @@ public class NotificationsController : ControllerBase
         return Ok(result);
     }
 
+    /// <summary>FIN-114 / NT-01: Số lượng thông báo chưa đọc của người dùng đăng nhập.</summary>
+    [HttpGet("unread-count")]
+    public async Task<IActionResult> GetUnreadCount()
+    {
+        var userId = GetCurrentUserId();
+        var count = await _context.Notifications.AsNoTracking()
+            .CountAsync(n => n.UserId == userId && !n.IsRead);
+        return Ok(new { count });
+    }
+
     [HttpPut("{id:guid}/read")]
     public async Task<IActionResult> MarkAsRead(Guid id)
     {

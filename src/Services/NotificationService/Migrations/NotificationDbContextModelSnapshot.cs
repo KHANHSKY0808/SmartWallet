@@ -17,6 +17,71 @@ namespace NotificationService.Migrations
 #pragma warning disable 612, 618
             modelBuilder.HasAnnotation("ProductVersion", "10.0.14");
 
+            modelBuilder.Entity("NotificationService.Models.EmailQueueItem", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("TEXT");
+
+                    b.Property<int>("Attempts")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<string>("BodyHtml")
+                        .HasColumnType("TEXT");
+
+                    b.Property<DateTime>("CreatedAt")
+                        .HasColumnType("TEXT");
+
+                    b.Property<Guid?>("EventId")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("LastError")
+                        .HasMaxLength(1000)
+                        .HasColumnType("TEXT");
+
+                    b.Property<DateTime?>("NextRetryAt")
+                        .HasColumnType("TEXT");
+
+                    b.Property<DateTime?>("SentAt")
+                        .HasColumnType("TEXT");
+
+                    b.Property<int>("Status")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<string>("Subject")
+                        .IsRequired()
+                        .HasMaxLength(300)
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("TemplateCode")
+                        .IsRequired()
+                        .HasMaxLength(100)
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("ToEmail")
+                        .IsRequired()
+                        .HasMaxLength(150)
+                        .HasColumnType("TEXT");
+
+                    b.Property<DateTime>("UpdatedAt")
+                        .HasColumnType("TEXT");
+
+                    b.Property<Guid?>("UserId")
+                        .HasColumnType("TEXT");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("EventId")
+                        .IsUnique()
+                        .HasDatabaseName("UX_EmailQueue_EventId")
+                        .HasFilter("\"EventId\" IS NOT NULL");
+
+                    b.HasIndex("Status", "NextRetryAt", "CreatedAt")
+                        .HasDatabaseName("IX_EmailQueue_Dispatch");
+
+                    b.ToTable("EmailQueue", (string)null);
+                });
+
             modelBuilder.Entity("NotificationService.Models.Notification", b =>
                 {
                     b.Property<Guid>("Id")
@@ -56,7 +121,9 @@ namespace NotificationService.Migrations
                     b.HasKey("Id");
 
                     b.HasIndex("EventId")
-                        .HasDatabaseName("IX_Notifications_EventId");
+                        .IsUnique()
+                        .HasDatabaseName("IX_Notifications_EventId")
+                        .HasFilter("\"EventId\" IS NOT NULL");
 
                     b.HasIndex("UserId", "CreatedAt")
                         .HasDatabaseName("IX_Notifications_User_CreatedAt");

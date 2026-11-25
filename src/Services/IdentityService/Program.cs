@@ -3,6 +3,7 @@ using IdentityService.Services;
 using Microsoft.EntityFrameworkCore;
 using SharedKernel.Extensions;
 using SharedKernel.Messaging;
+using StackExchange.Redis;
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -14,38 +15,48 @@ builder.Services.AddEndpointsApiExplorer();
 builder.Services.AddSwaggerGen();
 
 // Cấu hình Database SQLite
-var connectionString = builder.Configuration.GetConnectionString("DefaultConnection") 
+var connectionString = builder.Configuration.GetConnectionString("DefaultConnection")
     ?? "Data Source=../../../database/identity.db;Cache=Shared";
 builder.Services.AddDbContext<IdentityDbContext>(options =>
 {
     options.UseSqlite(connectionString);
 });
 
-// Đăng ký Services nghiệp vụ Identity
+// Cấu hình Redis cho D64/D65 (thu hồi phiên tức thì)
+var redisConnStr = builder.Configuration.GetConnectionString("Redis") ?? "localhost:6379";
+builder.Services.AddSingleton<IConnectionMultiplexer>(_ =>
+{
+    var opts = ConfigurationOptions.Parse(redisConnStr);
+    opts.AbortOnConnectFail = false;
+    opts.ConnectTimeout = 500;
+    opts.SyncTimeout = 500;
+    opts.AsyncTimeout = 500;
+    return ConnectionMultiplexer.Connect(opts);
+});
+builder.Services.AddSingleton<ISessionRevocationStore, RedisSessionRevocationStore>();
+
+// Đăng ký Services nghiệp vụ Identity (D62: bỏ LoggingEmailSender & Channel, phát EmailRequestedEvent qua RabbitMQ)
 builder.Services.AddScoped<IPasswordHasher, PasswordHasher>();
 builder.Services.AddScoped<ITokenService, TokenService>();
-var emailChannel = System.Threading.Channels.Channel.CreateUnbounded<EmailMessage>();
-builder.Services.AddSingleton(emailChannel);
-builder.Services.AddSingleton<IEmailSender, LoggingEmailSender>();
-builder.Services.AddHostedService<EmailDispatchBackgroundService>();
 builder.Services.AddSingleton<IEventPublisher, RabbitMqEventPublisher>();
 
-// Cấu hình JWT Bearer chung từ SharedKernel
+// Cấu hình JWT Bearer & RBAC chung từ SharedKernel
 builder.Services.AddJwtAuthentication(builder.Configuration);
 
 // Cấu hình Consul Service Discovery từ SharedKernel
 builder.Services.AddConsulConfig(builder.Configuration);
 
 // Chuẩn hóa Health Checks & Prometheus Metrics (D61)
-builder.Services.AddServiceHealthChecks<IdentityDbContext>(builder.Configuration, checkRabbitMq: true);
+builder.Services.AddServiceHealthChecks<IdentityDbContext>(builder.Configuration, checkRabbitMq: true, checkRedis: true);
 
 var app = builder.Build();
 
-// Khởi tạo Database và Seed Roles
+// Khởi tạo Database, Seed 3 Roles, 7 Permissions và Admin đầu tiên (D65, D66)
 using (var scope = app.Services.CreateScope())
 {
     var context = scope.ServiceProvider.GetRequiredService<IdentityDbContext>();
-    await DbInitializer.InitializeAsync(context, app.Logger);
+    var hasher = scope.ServiceProvider.GetRequiredService<IPasswordHasher>();
+    await DbInitializer.InitializeAsync(context, app.Logger, builder.Configuration, hasher);
 }
 
 if (app.Environment.IsDevelopment())

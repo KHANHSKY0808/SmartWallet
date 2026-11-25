@@ -17,6 +17,33 @@ namespace IdentityService.Data.Migrations
 #pragma warning disable 612, 618
             modelBuilder.HasAnnotation("ProductVersion", "10.0.14");
 
+            modelBuilder.Entity("IdentityService.Models.Permission", b =>
+                {
+                    b.Property<int>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("INTEGER");
+
+                    b.Property<string>("Code")
+                        .IsRequired()
+                        .HasMaxLength(100)
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("GroupName")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("Name")
+                        .IsRequired()
+                        .HasMaxLength(150)
+                        .HasColumnType("TEXT");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("Code")
+                        .IsUnique();
+
+                    b.ToTable("Permissions", (string)null);
+                });
+
             modelBuilder.Entity("IdentityService.Models.RefreshToken", b =>
                 {
                     b.Property<Guid>("Id")
@@ -74,6 +101,21 @@ namespace IdentityService.Data.Migrations
                     b.ToTable("Roles", (string)null);
                 });
 
+            modelBuilder.Entity("IdentityService.Models.RolePermission", b =>
+                {
+                    b.Property<int>("RoleId")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<int>("PermissionId")
+                        .HasColumnType("INTEGER");
+
+                    b.HasKey("RoleId", "PermissionId");
+
+                    b.HasIndex("PermissionId");
+
+                    b.ToTable("RolePermissions", (string)null);
+                });
+
             modelBuilder.Entity("IdentityService.Models.User", b =>
                 {
                     b.Property<Guid>("Id")
@@ -92,6 +134,18 @@ namespace IdentityService.Data.Migrations
                         .ValueGeneratedOnAdd()
                         .HasColumnType("INTEGER")
                         .HasDefaultValue(0);
+
+                    b.Property<string>("FullName")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("LockReason")
+                        .HasColumnType("TEXT");
+
+                    b.Property<DateTime?>("LockedAt")
+                        .HasColumnType("TEXT");
+
+                    b.Property<Guid?>("LockedByUserId")
+                        .HasColumnType("TEXT");
 
                     b.Property<DateTime?>("LockoutEnd")
                         .HasColumnType("TEXT");
@@ -177,6 +231,25 @@ namespace IdentityService.Data.Migrations
                     b.Navigation("User");
                 });
 
+            modelBuilder.Entity("IdentityService.Models.RolePermission", b =>
+                {
+                    b.HasOne("IdentityService.Models.Permission", "Permission")
+                        .WithMany("RolePermissions")
+                        .HasForeignKey("PermissionId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.HasOne("IdentityService.Models.Role", "Role")
+                        .WithMany("RolePermissions")
+                        .HasForeignKey("RoleId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.Navigation("Permission");
+
+                    b.Navigation("Role");
+                });
+
             modelBuilder.Entity("IdentityService.Models.UserRole", b =>
                 {
                     b.HasOne("IdentityService.Models.Role", "Role")
@@ -207,8 +280,15 @@ namespace IdentityService.Data.Migrations
                     b.Navigation("User");
                 });
 
+            modelBuilder.Entity("IdentityService.Models.Permission", b =>
+                {
+                    b.Navigation("RolePermissions");
+                });
+
             modelBuilder.Entity("IdentityService.Models.Role", b =>
                 {
+                    b.Navigation("RolePermissions");
+
                     b.Navigation("UserRoles");
                 });
 

@@ -26,7 +26,7 @@ builder.Services.AddHttpClient<IWalletServiceClient, WalletServiceClient>(client
     var url = builder.Configuration["Services:WalletService:Url"] ?? "http://localhost:8003";
     client.BaseAddress = new Uri(url);
     client.Timeout = TimeSpan.FromSeconds(3);
-});
+}).AddHttpMessageHandler(sp => new SystemTokenDelegatingHandler(sp.GetRequiredService<IConfiguration>(), "SavingGoalService"));
 
 // Cấu hình Event Publisher và Consumers
 builder.Services.AddSingleton<IEventPublisher, RabbitMqEventPublisher>();

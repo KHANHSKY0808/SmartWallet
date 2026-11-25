@@ -140,15 +140,9 @@ public class FilesController : ControllerBase
     }
 
     [HttpGet("/internal/files/{id:guid}")]
-    [AllowAnonymous]
+    [Authorize(Policy = "SystemOnly")]
     public async Task<IActionResult> GetInternalFileMetadata([FromRoute] Guid id)
     {
-        var remoteIp = HttpContext.Connection.RemoteIpAddress;
-        if (remoteIp != null && !System.Net.IPAddress.IsLoopback(remoteIp))
-        {
-            return Forbid();
-        }
-
         var metadata = await _context.FileMetadatas.FirstOrDefaultAsync(f => f.Id == id && f.DeletedAt == null);
         if (metadata == null)
         {

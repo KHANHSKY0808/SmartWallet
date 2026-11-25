@@ -1,6 +1,6 @@
 import { Routes } from '@angular/router';
 import { authGuard } from './core/guards/auth.guard';
-import { roleGuard } from './core/guards/role.guard';
+import { permissionGuard } from './core/guards/role.guard';
 
 export const routes: Routes = [
   {
@@ -105,8 +105,18 @@ export const routes: Routes = [
   },
   {
     path: 'admin/health',
-    canActivate: [roleGuard(['Admin'])],
+    canActivate: [permissionGuard(['health.read'])],
     loadComponent: () => import('./features/admin/admin-health/admin-health.component').then(m => m.AdminHealthComponent)
+  },
+  {
+    path: 'admin/users',
+    canActivate: [permissionGuard(['users.read'])],
+    loadComponent: () => import('./features/admin/admin-users/admin-users.component').then(m => m.AdminUsersComponent)
+  },
+  {
+    path: 'admin/audit',
+    canActivate: [permissionGuard(['audit.read'])],
+    loadComponent: () => import('./features/admin/admin-audit/admin-audit.component').then(m => m.AdminAuditComponent)
   },
   {
     path: '**',

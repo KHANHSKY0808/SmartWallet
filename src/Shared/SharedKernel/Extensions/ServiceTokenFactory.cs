@@ -1,4 +1,5 @@
 using System.IdentityModel.Tokens.Jwt;
+using System.Net.Http.Headers;
 using System.Security.Claims;
 using System.Text;
 using Microsoft.Extensions.Configuration;
@@ -7,7 +8,7 @@ using Microsoft.IdentityModel.Tokens;
 namespace SharedKernel.Extensions;
 
 /// <summary>
-/// Tạo Service Token (JWT role="System", thời hạn 5 phút) để gọi các endpoint /internal/* theo D41 & D58.
+/// Tạo Service Token (JWT role="System", thời hạn 5 phút) để gọi các endpoint /internal/* theo D41, D58 & D65.
 /// </summary>
 public static class ServiceTokenFactory
 {
@@ -39,6 +40,31 @@ public static class ServiceTokenFactory
             signingCredentials: creds);
 
         return new JwtSecurityTokenHandler().WriteToken(token);
+    }
+}
+
+/// <summary>
+/// Tự động gắn Bearer Service Token (role="System") cho các HTTP client nội bộ nếu chưa có Authorization header.
+/// </summary>
+public sealed class SystemTokenDelegatingHandler : DelegatingHandler
+{
+    private readonly IConfiguration _configuration;
+    private readonly string _serviceName;
+
+    public SystemTokenDelegatingHandler(IConfiguration configuration, string serviceName)
+    {
+        _configuration = configuration;
+        _serviceName = serviceName;
+    }
+
+    protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
+    {
+        if (request.Headers.Authorization is null)
+        {
+            var token = ServiceTokenFactory.CreateSystemToken(_configuration, _serviceName);
+            request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", token);
+        }
+        return base.SendAsync(request, cancellationToken);
     }
 }
 
