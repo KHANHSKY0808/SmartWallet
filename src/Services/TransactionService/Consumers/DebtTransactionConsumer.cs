@@ -35,6 +35,20 @@ public class DebtTransactionConsumer : BaseRabbitMqConsumer<DebtTransactionReque
         var context = scope.ServiceProvider.GetRequiredService<TransactionDbContext>();
         var eventPublisher = scope.ServiceProvider.GetService<IEventPublisher>();
 
+        var subId = @event.PaymentId ?? @event.DebtId;
+
+        // 0. Kiểm tra trùng lặp theo (SourceType=Debt, SourceId=DebtId, SourceSubId=PaymentId??DebtId) (N36 / D44)
+        var alreadyExists = await context.Transactions.AnyAsync(t =>
+            t.SourceType == SourceType.Debt &&
+            t.SourceId == @event.DebtId &&
+            t.SourceSubId == subId, cancellationToken);
+
+        if (alreadyExists)
+        {
+            _logger.LogInformation("Bỏ qua giao dịch sổ nợ đã xử lý: Debt {DebtId}, SubId {SubId}", @event.DebtId, subId);
+            return;
+        }
+
         // 1. Tạo giao dịch sổ nợ
         var tx = new Transaction
         {
@@ -47,6 +61,7 @@ public class DebtTransactionConsumer : BaseRabbitMqConsumer<DebtTransactionReque
             TransactionDate = @event.TransactionDate,
             SourceType = SourceType.Debt,
             SourceId = @event.DebtId,
+            SourceSubId = subId,
             Note = @event.Note,
             RowVersion = Guid.NewGuid(),
             CreatedAt = DateTime.UtcNow,
@@ -54,7 +69,15 @@ public class DebtTransactionConsumer : BaseRabbitMqConsumer<DebtTransactionReque
         };
 
         context.Transactions.Add(tx);
-        await context.SaveChangesAsync(cancellationToken);
+        try
+        {
+            await context.SaveChangesAsync(cancellationToken);
+        }
+        catch (DbUpdateException)
+        {
+            _logger.LogInformation("Bỏ qua giao dịch sổ nợ bị trùng đồng thời (unique index): Debt {DebtId}, SubId {SubId}", @event.DebtId, subId);
+            return;
+        }
 
         _logger.LogInformation("Đã tạo giao dịch sổ nợ {TxId} cho Debt {DebtId}", tx.Id, @event.DebtId);
 

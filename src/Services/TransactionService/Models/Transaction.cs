@@ -49,6 +49,8 @@ public class Transaction
 
     public Guid? SourceId { get; set; }
 
+    public Guid? SourceSubId { get; set; }
+
     public DateOnly? OccurrenceDate { get; set; }
 
     /// <summary>

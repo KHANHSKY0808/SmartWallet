@@ -83,6 +83,9 @@ namespace TransactionService.Migrations
                     b.Property<Guid?>("SourceId")
                         .HasColumnType("TEXT");
 
+                    b.Property<Guid?>("SourceSubId")
+                        .HasColumnType("TEXT");
+
                     b.Property<int>("SourceType")
                         .HasColumnType("INTEGER");
 
@@ -122,6 +125,10 @@ namespace TransactionService.Migrations
                     b.HasIndex("SourceType", "SourceId", "OccurrenceDate")
                         .IsUnique()
                         .HasFilter("SourceType = 2 AND SourceId IS NOT NULL AND OccurrenceDate IS NOT NULL");
+
+                    b.HasIndex("SourceType", "SourceId", "SourceSubId")
+                        .IsUnique()
+                        .HasFilter("SourceType = 3 AND SourceSubId IS NOT NULL");
 
                     b.ToTable("Transactions", (string)null);
                 });

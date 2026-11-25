@@ -321,7 +321,7 @@ public class SavingsControllerTests : IDisposable
     }
 
     [Fact]
-    public async Task ConservationOfMoney_GT14()
+    public async Task Withdraw_DecreasesCurrentAmount_Consistent()
     {
         var walletId = Guid.NewGuid();
         _walletServiceClient.Wallets[walletId] = new WalletInfo
@@ -361,7 +361,7 @@ public class SavingsControllerTests : IDisposable
     }
 
     [Fact]
-    public async Task CalculateMonthlyRequired_SG07()
+    public async Task CalculateMonthlyRequired_SG04()
     {
         // Target: 10,000,000, Current: 4,000,000 => Remaining: 6,000,000
         // TargetDate in 90 days (~3 months) => MonthlyRequired ~ 2,000,000

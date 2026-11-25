@@ -49,6 +49,14 @@ public class GoalFundsWithdrawnConsumer : BaseRabbitMqConsumer<GoalFundsWithdraw
             throw new InvalidOperationException($"Ví {@event.WalletId} không hợp lệ để nhận tiền từ mục tiêu.");
         }
 
+        if (!string.IsNullOrWhiteSpace(@event.Currency) &&
+            !string.Equals(wallet.Currency, @event.Currency, StringComparison.OrdinalIgnoreCase))
+        {
+            _logger.LogError("Ví {WalletId} có tiền tệ {WalletCurrency} không khớp với tiền tệ mục tiêu {GoalCurrency}",
+                @event.WalletId, wallet.Currency, @event.Currency);
+            throw new InvalidOperationException($"Loại tiền của ví ({wallet.Currency}) không khớp với mục tiêu ({@event.Currency}).");
+        }
+
         wallet.Balance += @event.Amount;
         wallet.RowVersion = Guid.NewGuid().ToByteArray();
 

@@ -19,8 +19,6 @@ namespace RecurringDebtService.Controllers;
 [Authorize]
 public class DebtsController : ControllerBase
 {
-    private static readonly SemaphoreSlim ConcurrencyLock = new(1, 1);
-
     // 4 GUIDs danh mục hệ thống sổ nợ (D44 / FIN-97b / DB-09)
     public static readonly Guid CatExpenseLend = Guid.Parse("10000000-0000-0000-0000-000000000021");
     public static readonly Guid CatIncomeDebtCollection = Guid.Parse("10000000-0000-0000-0000-000000000022");
@@ -86,9 +84,9 @@ public class DebtsController : ControllerBase
         var token = GetBearerToken();
 
         var walletResult = await _walletClient.ValidateWalletAsync(request.WalletId, token, cancellationToken);
-        if (!walletResult.Exists || (walletResult.UserId != null && walletResult.UserId != userId) || walletResult.IsArchived)
+        if (!walletResult.Exists || walletResult.UserId != userId || walletResult.IsArchived)
         {
-            return BadRequest(new { message = "Ví không tồn tại hoặc đã bị lưu trữ" });
+            return BadRequest(new { message = "Ví không tồn tại, không thuộc quyền sở hữu hoặc đã bị lưu trữ" });
         }
 
         var debt = new Debt
@@ -100,7 +98,7 @@ public class DebtsController : ControllerBase
             Amount = request.Amount,
             PaidAmount = 0,
             InterestRate = request.InterestRate,
-            Currency = "VND",
+            Currency = walletResult.Currency,
             DueDate = request.DueDate,
             Status = DebtStatus.Active,
             WalletId = request.WalletId,
@@ -110,32 +108,53 @@ public class DebtsController : ControllerBase
             UpdatedAt = DateTime.UtcNow
         };
 
-        _context.Debts.Add(debt);
-        await _context.SaveChangesAsync(cancellationToken);
-
-        // Phát sự kiện tạo giao dịch tương ứng (D44 / DB-01 / DB-02)
-        // Cho vay -> Chi, "Cho vay" (ví giảm)
-        // Đi vay -> Thu, "Đi vay" (ví tăng)
-        if (_eventPublisher != null)
+        await using var tx = await _context.Database.BeginTransactionAsync(cancellationToken);
+        try
         {
-            var txType = debt.Type == DebtType.Lend ? 1 : 2; // 1: Expense, 2: Income
-            var catId = debt.Type == DebtType.Lend ? CatExpenseLend : CatIncomeBorrow;
-            var note = debt.Type == DebtType.Lend
-                ? $"Cho vay {debt.PersonName}"
-                : $"Đi vay từ {debt.PersonName}";
+            _context.Debts.Add(debt);
+            await _context.SaveChangesAsync(cancellationToken);
 
-            await _eventPublisher.PublishAsync(new DebtTransactionRequestedEvent
+            // Phát sự kiện tạo giao dịch tương ứng (D44 / DB-01 / DB-02 / D30)
+            // Cho vay -> Chi, "Cho vay" (ví giảm)
+            // Đi vay -> Thu, "Đi vay" (ví tăng)
+            if (_eventPublisher != null)
             {
-                DebtId = debt.Id,
-                PaymentId = null,
-                UserId = userId,
-                WalletId = debt.WalletId,
-                Type = txType,
-                Amount = debt.Amount,
-                CategoryId = catId,
-                Note = note,
-                TransactionDate = DateTime.UtcNow
-            }, "debt.transaction_requested", cancellationToken);
+                var txType = debt.Type == DebtType.Lend ? 1 : 2; // 1: Expense, 2: Income
+                var catId = debt.Type == DebtType.Lend ? CatExpenseLend : CatIncomeBorrow;
+                var note = debt.Type == DebtType.Lend
+                    ? $"Cho vay {debt.PersonName}"
+                    : $"Đi vay từ {debt.PersonName}";
+
+                try
+                {
+                    await _eventPublisher.PublishAsync(new DebtTransactionRequestedEvent
+                    {
+                        DebtId = debt.Id,
+                        PaymentId = null,
+                        UserId = userId,
+                        WalletId = debt.WalletId,
+                        Type = txType,
+                        Amount = debt.Amount,
+                        CategoryId = catId,
+                        Note = note,
+                        TransactionDate = DateTime.UtcNow
+                    }, "debt.transaction_requested", cancellationToken);
+                }
+                catch (Exception ex) when (ex is not OperationCanceledException)
+                {
+                    await tx.RollbackAsync(cancellationToken);
+                    _logger.LogError(ex, "Lỗi phát sự kiện khi tạo khoản nợ {DebtId}", debt.Id);
+                    return StatusCode(503, new { code = "EVENT_PUBLISH_FAILED", message = "Không thể kết nối hệ thống sự kiện. Thao tác đã được hoàn tác." });
+                }
+            }
+
+            await tx.CommitAsync(cancellationToken);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            await tx.RollbackAsync(cancellationToken);
+            _logger.LogError(ex, "Lỗi lưu khoản nợ {DebtId}", debt.Id);
+            throw;
         }
 
         _logger.LogInformation("Tạo khoản nợ {DebtId} thành công cho User {UserId}", debt.Id, userId);
@@ -215,18 +234,30 @@ public class DebtsController : ControllerBase
             return StatusCode(409, new { code = "DEBT_HAS_PAYMENTS", message = "Không thể xóa khoản nợ đã có thanh toán" });
         }
 
+        await using var tx = await _context.Database.BeginTransactionAsync(cancellationToken);
         _context.Debts.Remove(debt);
         await _context.SaveChangesAsync(cancellationToken);
 
-        // DB-05 / D57: Xóa khoản nợ chưa thanh toán thì phát event để giao dịch gốc bị xóa và hoàn tiền ví
+        // DB-05 / D57 / D30: Xóa khoản nợ chưa thanh toán thì phát event để giao dịch gốc bị xóa và hoàn tiền ví
         if (_eventPublisher != null)
         {
-            await _eventPublisher.PublishAsync(new DebtDeletedEvent
+            try
             {
-                DebtId = debt.Id,
-                UserId = userId
-            }, "debt.deleted", cancellationToken);
+                await _eventPublisher.PublishAsync(new DebtDeletedEvent
+                {
+                    DebtId = debt.Id,
+                    UserId = userId
+                }, "debt.deleted", cancellationToken);
+            }
+            catch (Exception ex) when (ex is not OperationCanceledException)
+            {
+                await tx.RollbackAsync(cancellationToken);
+                _logger.LogError(ex, "Lỗi phát sự kiện khi xóa khoản nợ {DebtId}", debt.Id);
+                return StatusCode(503, new { code = "EVENT_PUBLISH_FAILED", message = "Không thể kết nối hệ thống sự kiện. Thao tác đã được hoàn tác." });
+            }
         }
+
+        await tx.CommitAsync(cancellationToken);
 
         return Ok(new { message = "Đã xóa khoản nợ thành công" });
     }
@@ -255,111 +286,155 @@ public class DebtsController : ControllerBase
         var rawBody = JsonSerializer.Serialize(request);
         var bodyHash = ComputeHash(rawBody);
 
-        await ConcurrencyLock.WaitAsync(cancellationToken);
+        var existingRecord = await _context.IdempotencyRecords
+            .AsNoTracking()
+            .FirstOrDefaultAsync(r => r.UserId == userId && r.Key == key, cancellationToken);
+
+        if (existingRecord != null)
+        {
+            if (existingRecord.RequestHash == bodyHash)
+            {
+                var cachedDto = JsonSerializer.Deserialize<DebtPaymentDto>(existingRecord.ResponseBody);
+                return StatusCode(existingRecord.StatusCode, cachedDto);
+            }
+            return StatusCode(422, new
+            {
+                code = "IDEMPOTENCY_KEY_REUSED",
+                message = "Idempotency key đã được sử dụng với payload khác"
+            });
+        }
+
+        var debt = await _context.Debts.FirstOrDefaultAsync(d => d.Id == id && d.UserId == userId, cancellationToken);
+        if (debt == null)
+        {
+            return NotFound(new { message = "Khoản nợ không tồn tại hoặc không thuộc quyền sở hữu" });
+        }
+
+        // N34 & N35: Kiểm tra ví đồng bộ trước khi ghi thanh toán (tồn tại, thuộc user, chưa lưu trữ, cùng tiền tệ)
+        var token = GetBearerToken();
+        var walletResult = await _walletClient.ValidateWalletAsync(request.WalletId, token, cancellationToken);
+        if (!walletResult.Exists || walletResult.UserId != userId)
+        {
+            return NotFound(new { message = "Ví không tồn tại hoặc không thuộc quyền sở hữu" });
+        }
+        if (walletResult.IsArchived)
+        {
+            return BadRequest(new { code = "WALLET_ARCHIVED", message = "Ví đã bị lưu trữ" });
+        }
+        if (!string.Equals(walletResult.Currency, debt.Currency, StringComparison.OrdinalIgnoreCase))
+        {
+            return BadRequest(new { code = "CURRENCY_MISMATCH", message = $"Loại tiền của ví ({walletResult.Currency}) không khớp với khoản nợ ({debt.Currency})" });
+        }
+
+        // DP-06: Khoản nợ đã PaidFull không thể thanh toán thêm
+        if (debt.Status == DebtStatus.PaidFull)
+        {
+            return BadRequest(new { message = "Khoản nợ đã được thanh toán đầy đủ" });
+        }
+
+        // DP-05 / DP-08: Thanh toán vượt dư nợ còn lại -> 400
+        if (debt.PaidAmount + request.Amount > debt.Amount)
+        {
+            return BadRequest(new { message = "Số tiền thanh toán vượt dư nợ còn lại" });
+        }
+
+        await using var tx = await _context.Database.BeginTransactionAsync(System.Data.IsolationLevel.Serializable, cancellationToken);
+
+        var payment = new DebtPayment
+        {
+            Id = Guid.NewGuid(),
+            DebtId = debt.Id,
+            UserId = userId,
+            WalletId = request.WalletId,
+            Amount = request.Amount,
+            PaymentDate = DateTime.UtcNow,
+            Note = request.Note,
+            IdempotencyKey = key,
+            CreatedAt = DateTime.UtcNow
+        };
+
+        debt.PaidAmount += request.Amount;
+        if (debt.PaidAmount >= debt.Amount)
+        {
+            debt.Status = DebtStatus.PaidFull;
+        }
+        debt.UpdatedAt = DateTime.UtcNow;
+        debt.RowVersion = Guid.NewGuid();
+
+        _context.DebtPayments.Add(payment);
+
+        var paymentDto = new DebtPaymentDto
+        {
+            Id = payment.Id,
+            DebtId = payment.DebtId,
+            UserId = payment.UserId,
+            WalletId = payment.WalletId,
+            Amount = payment.Amount,
+            PaymentDate = payment.PaymentDate,
+            Note = payment.Note,
+            IdempotencyKey = payment.IdempotencyKey,
+            CreatedAt = payment.CreatedAt
+        };
+
+        var idempRecord = new IdempotencyRecord
+        {
+            UserId = userId,
+            Key = key,
+            Operation = "DebtPayment",
+            RequestHash = bodyHash,
+            StatusCode = 201,
+            ResponseBody = JsonSerializer.Serialize(paymentDto),
+            CreatedAt = DateTime.UtcNow,
+            ExpiresAt = DateTime.UtcNow.AddHours(24)
+        };
+        _context.IdempotencyRecords.Add(idempRecord);
+
         try
         {
-            var existingRecord = await _context.IdempotencyRecords
-                .FirstOrDefaultAsync(r => r.UserId == userId && r.Key == key, cancellationToken);
-
-            if (existingRecord != null)
-            {
-                if (existingRecord.RequestHash == bodyHash)
-                {
-                    // Cùng key + cùng body: trả lại kết quả đã lưu
-                    var cachedDto = JsonSerializer.Deserialize<DebtPaymentDto>(existingRecord.ResponseBody);
-                    return StatusCode(existingRecord.StatusCode, cachedDto);
-                }
-                else
-                {
-                    // Cùng key + khác body: 422 IDEMPOTENCY_KEY_REUSED (DP-03)
-                    return StatusCode(422, new
-                    {
-                        code = "IDEMPOTENCY_KEY_REUSED",
-                        message = "Idempotency key đã được sử dụng với payload khác"
-                    });
-                }
-            }
-
-            var debt = await _context.Debts.FirstOrDefaultAsync(d => d.Id == id && d.UserId == userId, cancellationToken);
-            if (debt == null)
-            {
-                return NotFound(new { message = "Khoản nợ không tồn tại hoặc không thuộc quyền sở hữu" });
-            }
-
-            // DP-06: Khoản nợ đã PaidFull không thể thanh toán thêm
-            if (debt.Status == DebtStatus.PaidFull)
-            {
-                return BadRequest(new { message = "Khoản nợ đã được thanh toán đầy đủ" });
-            }
-
-            // DP-05 / DP-08: Thanh toán vượt dư nợ còn lại -> 400
-            if (debt.PaidAmount + request.Amount > debt.Amount)
-            {
-                return BadRequest(new { message = "Số tiền thanh toán vượt dư nợ còn lại" });
-            }
-
-            var payment = new DebtPayment
-            {
-                Id = Guid.NewGuid(),
-                DebtId = debt.Id,
-                UserId = userId,
-                WalletId = request.WalletId,
-                Amount = request.Amount,
-                PaymentDate = DateTime.UtcNow,
-                Note = request.Note,
-                IdempotencyKey = key,
-                CreatedAt = DateTime.UtcNow
-            };
-
-            debt.PaidAmount += request.Amount;
-            if (debt.PaidAmount >= debt.Amount)
-            {
-                debt.Status = DebtStatus.PaidFull;
-            }
-            debt.UpdatedAt = DateTime.UtcNow;
-            debt.RowVersion = Guid.NewGuid();
-
-            _context.DebtPayments.Add(payment);
-
-            var paymentDto = new DebtPaymentDto
-            {
-                Id = payment.Id,
-                DebtId = payment.DebtId,
-                UserId = payment.UserId,
-                WalletId = payment.WalletId,
-                Amount = payment.Amount,
-                PaymentDate = payment.PaymentDate,
-                Note = payment.Note,
-                IdempotencyKey = payment.IdempotencyKey,
-                CreatedAt = payment.CreatedAt
-            };
-
-            var idempRecord = new IdempotencyRecord
-            {
-                UserId = userId,
-                Key = key,
-                Operation = "DebtPayment",
-                RequestHash = bodyHash,
-                StatusCode = 201,
-                ResponseBody = JsonSerializer.Serialize(paymentDto),
-                CreatedAt = DateTime.UtcNow,
-                ExpiresAt = DateTime.UtcNow.AddHours(24)
-            };
-            _context.IdempotencyRecords.Add(idempRecord);
-
             await _context.SaveChangesAsync(cancellationToken);
-
-            // Phát sự kiện để TransactionService tạo giao dịch thanh toán
-            // Cho vay -> thu nợ: Thu, "Thu nợ" (DP-01)
-            // Đi vay -> trả nợ: Chi, "Trả nợ" (DP-07)
-            if (_eventPublisher != null)
+        }
+        catch (DbUpdateConcurrencyException)
+        {
+            await tx.RollbackAsync(cancellationToken);
+            return StatusCode(409, new { code = "CONCURRENCY_CONFLICT", message = "Xung đột đồng thời khi cập nhật khoản nợ" });
+        }
+        catch (DbUpdateException)
+        {
+            await tx.RollbackAsync(cancellationToken);
+            _context.ChangeTracker.Clear();
+            var dupRecord = await _context.IdempotencyRecords
+                .AsNoTracking()
+                .FirstOrDefaultAsync(r => r.UserId == userId && r.Key == key, cancellationToken);
+            if (dupRecord != null)
             {
-                var txType = debt.Type == DebtType.Lend ? 2 : 1; // Lend -> Income (Thu nợ), Borrow -> Expense (Trả nợ)
-                var catId = debt.Type == DebtType.Lend ? CatIncomeDebtCollection : CatExpenseDebtRepayment;
-                var note = debt.Type == DebtType.Lend
-                    ? $"Thu nợ từ {debt.PersonName}"
-                    : $"Trả nợ cho {debt.PersonName}";
+                if (dupRecord.RequestHash == bodyHash)
+                {
+                    var cachedDto = JsonSerializer.Deserialize<DebtPaymentDto>(dupRecord.ResponseBody);
+                    return StatusCode(dupRecord.StatusCode, cachedDto);
+                }
+                return StatusCode(422, new { code = "IDEMPOTENCY_KEY_REUSED", message = "Idempotency key đã được sử dụng với payload khác" });
+            }
+            return StatusCode(409, new { code = "CONCURRENCY_CONFLICT", message = "Xung đột đồng thời khi ghi thanh toán nợ" });
+        }
+        catch (Microsoft.Data.Sqlite.SqliteException)
+        {
+            await tx.RollbackAsync(cancellationToken);
+            return StatusCode(409, new { code = "CONCURRENCY_CONFLICT", message = "Xung đột đồng thời khi ghi thanh toán nợ" });
+        }
 
+        // Phát sự kiện để TransactionService tạo giao dịch thanh toán (D30)
+        // Cho vay -> thu nợ: Thu, "Thu nợ" (DP-01)
+        // Đi vay -> trả nợ: Chi, "Trả nợ" (DP-07)
+        if (_eventPublisher != null)
+        {
+            var txType = debt.Type == DebtType.Lend ? 2 : 1; // Lend -> Income (Thu nợ), Borrow -> Expense (Trả nợ)
+            var catId = debt.Type == DebtType.Lend ? CatIncomeDebtCollection : CatExpenseDebtRepayment;
+            var note = debt.Type == DebtType.Lend
+                ? $"Thu nợ từ {debt.PersonName}"
+                : $"Trả nợ cho {debt.PersonName}";
+
+            try
+            {
                 await _eventPublisher.PublishAsync(new DebtTransactionRequestedEvent
                 {
                     DebtId = debt.Id,
@@ -373,16 +448,20 @@ public class DebtsController : ControllerBase
                     TransactionDate = DateTime.UtcNow
                 }, "debt.transaction_requested", cancellationToken);
             }
-
-            _logger.LogInformation("Ghi nhận thanh toán {PaymentId} cho Debt {DebtId}: Amount {Amount}, Status {Status}",
-                payment.Id, debt.Id, payment.Amount, debt.Status);
-
-            return StatusCode(201, paymentDto);
+            catch (Exception ex) when (ex is not OperationCanceledException)
+            {
+                await tx.RollbackAsync(cancellationToken);
+                _logger.LogError(ex, "Lỗi phát sự kiện khi thanh toán nợ {DebtId}", debt.Id);
+                return StatusCode(503, new { code = "EVENT_PUBLISH_FAILED", message = "Không thể kết nối hệ thống sự kiện. Giao dịch đã được hoàn tác." });
+            }
         }
-        finally
-        {
-            ConcurrencyLock.Release();
-        }
+
+        await tx.CommitAsync(cancellationToken);
+
+        _logger.LogInformation("Ghi nhận thanh toán {PaymentId} cho Debt {DebtId}: Amount {Amount}, Status {Status}",
+            payment.Id, debt.Id, payment.Amount, debt.Status);
+
+        return StatusCode(201, paymentDto);
     }
 
     [HttpGet("{id:guid}/payments")]

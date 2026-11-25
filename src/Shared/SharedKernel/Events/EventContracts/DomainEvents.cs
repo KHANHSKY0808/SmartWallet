@@ -91,6 +91,7 @@ public record GoalFundsWithdrawnEvent : IntegrationEvent
     public Guid WalletId { get; init; }
     public Guid UserId { get; init; }
     public decimal Amount { get; init; }
+    public string? Currency { get; init; }
     public string? GoalName { get; init; }
 }
 

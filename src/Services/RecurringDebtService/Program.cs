@@ -79,7 +79,7 @@ using (var scope = app.Services.CreateScope())
     {
         Directory.CreateDirectory(dir);
     }
-    db.Database.EnsureCreated();
+    db.Database.Migrate();
     db.Database.ExecuteSqlRaw("PRAGMA journal_mode=WAL;");
 }
 

@@ -553,7 +553,7 @@ public class WalletsControllerTests : IDisposable
     }
 
     [Fact]
-    public async Task ConservationOfMoney_GT14()
+    public async Task Deposit_DecreasesWalletBalance_Consistent()
     {
         var wallet = new Wallet
         {

@@ -155,7 +155,7 @@ public class ExchangeRatesControllerTests : IDisposable
     }
 
     [Fact]
-    public async Task ExchangeRate_Cache_FX09()
+    public async Task GetSingleExchangeRate_RepeatedCalls_ReturnsConsistentRate()
     {
         SetUser(_normalUserId);
 
@@ -175,7 +175,7 @@ public class ExchangeRatesControllerTests : IDisposable
     }
 
     [Fact]
-    public async Task ExchangeRate_Fallback_FX10()
+    public async Task GetSingleExchangeRate_SameInvertedAndMissingPairs_BehavesCorrectly()
     {
         SetUser(_normalUserId);
 

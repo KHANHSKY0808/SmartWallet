@@ -54,8 +54,9 @@ public class TransactionCreatedConsumer : BaseRabbitMqConsumer<TransactionCreate
 
         if (wallet == null)
         {
-            _logger.LogWarning("Không tìm thấy ví {WalletId} của user {UserId}", @event.WalletId, @event.UserId);
-            return;
+            _logger.LogError("Không tìm thấy ví {WalletId} của user {UserId} khi xử lý TransactionCreatedEvent {TxId}",
+                @event.WalletId, @event.UserId, @event.TransactionId);
+            throw new InvalidOperationException($"Không tìm thấy ví {@event.WalletId} của user {@event.UserId}.");
         }
 
         decimal changeAmount;

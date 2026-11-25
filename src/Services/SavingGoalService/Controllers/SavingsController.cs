@@ -359,6 +359,7 @@ public class SavingsController : ControllerBase
                 WalletId = request.WalletId,
                 UserId = userId,
                 Amount = request.Amount,
+                Currency = goal.Currency,
                 GoalName = goal.Name
             }, "goal.funds_withdrawn");
 
