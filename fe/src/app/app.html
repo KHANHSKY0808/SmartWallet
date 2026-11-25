@@ -25,6 +25,12 @@
           <a routerLink="/budgets" style="color: white; text-decoration: none; font-weight: 500; font-size: 0.9rem; padding: 0.4rem 0.8rem; border-radius: 4px; display: flex; align-items: center; gap: 0.4rem;">
             <span>🎯</span> Ngân sách
           </a>
+          <a routerLink="/reports" style="color: white; text-decoration: none; font-weight: 500; font-size: 0.9rem; padding: 0.4rem 0.8rem; border-radius: 4px; display: flex; align-items: center; gap: 0.4rem;">
+            <span>📊</span> Báo cáo
+          </a>
+          <a *ngIf="authService.currentUserRole() === 'Admin'" routerLink="/admin/health" style="color: #fde047; text-decoration: none; font-weight: 600; font-size: 0.9rem; padding: 0.4rem 0.8rem; border-radius: 4px; display: flex; align-items: center; gap: 0.4rem;">
+            <span>🛡️</span> Giám sát
+          </a>
           <a routerLink="/profile" style="color: white; text-decoration: none; font-weight: 500; font-size: 0.9rem; padding: 0.4rem 0.8rem; border-radius: 4px; display: flex; align-items: center; gap: 0.4rem;">
             <span>👤</span> Hồ sơ
           </a>

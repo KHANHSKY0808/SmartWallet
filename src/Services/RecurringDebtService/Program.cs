@@ -68,6 +68,9 @@ builder.Services.AddJwtAuthentication(builder.Configuration);
 // Cấu hình Consul Service Discovery từ SharedKernel
 builder.Services.AddConsulConfig(builder.Configuration);
 
+// Chuẩn hóa Health Checks & Prometheus Metrics (D61)
+builder.Services.AddServiceHealthChecks<RecurringDebtDbContext>(builder.Configuration, checkRabbitMq: true);
+
 var app = builder.Build();
 
 // Khởi tạo Database nếu cần
@@ -92,14 +95,8 @@ if (app.Environment.IsDevelopment())
 app.UseAuthentication();
 app.UseAuthorization();
 
-// Endpoint kiểm tra sức khỏe dịch vụ
-app.MapGet("/health", () => Results.Ok(new
-{
-    status = "healthy",
-    service = "RecurringDebtService",
-    port = 8008,
-    timestamp = DateTime.UtcNow
-}));
+// Endpoint kiểm tra sức khỏe & metrics (D61)
+app.UseServiceHealthAndMetrics("RecurringDebtService");
 
 // Đăng ký dịch vụ với Consul
 app.UseConsulServiceRegistration(builder.Configuration, app.Lifetime);

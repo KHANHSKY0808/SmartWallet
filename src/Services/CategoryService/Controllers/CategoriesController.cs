@@ -3,6 +3,8 @@ using System.Text.RegularExpressions;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
+using SharedKernel.Events.EventContracts;
+using SharedKernel.Messaging;
 using CategoryService.Data;
 using CategoryService.DTOs;
 using CategoryService.Models;
@@ -19,15 +21,18 @@ public class CategoriesController : ControllerBase
     private readonly CategoryDbContext _context;
     private readonly ILogger<CategoriesController> _logger;
     private readonly ITransactionClient? _transactionClient;
+    private readonly IEventPublisher? _eventPublisher;
 
     public CategoriesController(
         CategoryDbContext context,
         ILogger<CategoriesController> logger,
-        ITransactionClient? transactionClient = null)
+        ITransactionClient? transactionClient = null,
+        IEventPublisher? eventPublisher = null)
     {
         _context = context;
         _logger = logger;
         _transactionClient = transactionClient;
+        _eventPublisher = eventPublisher;
     }
 
     [HttpGet]
@@ -284,6 +289,25 @@ public class CategoriesController : ControllerBase
         category.UpdatedAt = DateTime.UtcNow;
 
         await _context.SaveChangesAsync();
+
+        if (_eventPublisher != null)
+        {
+            try
+            {
+                await _eventPublisher.PublishAsync(new CategoryUpdatedEvent
+                {
+                    CategoryId = category.Id,
+                    UserId = category.UserId,
+                    Name = category.Name,
+                    ParentId = category.ParentId
+                }, "category.updated");
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex, "Không thể phát sự kiện CategoryUpdatedEvent cho {CategoryId}", category.Id);
+            }
+        }
+
         return Ok(ToDto(category));
     }
 

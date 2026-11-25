@@ -36,6 +36,9 @@ builder.Services.AddJwtAuthentication(builder.Configuration);
 // Cấu hình Consul Service Discovery từ SharedKernel
 builder.Services.AddConsulConfig(builder.Configuration);
 
+// Chuẩn hóa Health Checks & Prometheus Metrics (D61)
+builder.Services.AddServiceHealthChecks<IdentityDbContext>(builder.Configuration, checkRabbitMq: true);
+
 var app = builder.Build();
 
 // Khởi tạo Database và Seed Roles
@@ -54,14 +57,8 @@ if (app.Environment.IsDevelopment())
 app.UseAuthentication();
 app.UseAuthorization();
 
-// Endpoint kiểm tra sức khỏe dịch vụ
-app.MapGet("/health", () => Results.Ok(new
-{
-    status = "healthy",
-    service = "IdentityService",
-    port = 8001,
-    timestamp = DateTime.UtcNow
-}));
+// Endpoint kiểm tra sức khỏe & metrics (D61)
+app.UseServiceHealthAndMetrics("IdentityService");
 
 // Đăng ký dịch vụ với Consul
 app.UseConsulServiceRegistration(builder.Configuration, app.Lifetime);

@@ -2,7 +2,7 @@ using System.Text.Json;
 
 namespace TransactionService.Services;
 
-public record WalletValidationResult(bool Exists, bool IsArchived);
+public record WalletValidationResult(bool Exists, bool IsArchived, string Currency = "VND");
 
 public interface IWalletClient
 {
@@ -48,7 +48,15 @@ public class WalletClient : IWalletClient
                 isArchived = archProp.GetBoolean();
             }
 
-            return new WalletValidationResult(true, isArchived);
+            var currency = "VND";
+            if ((doc.RootElement.TryGetProperty("currency", out var currProp) ||
+                 doc.RootElement.TryGetProperty("Currency", out currProp)) &&
+                currProp.ValueKind == JsonValueKind.String)
+            {
+                currency = currProp.GetString() ?? "VND";
+            }
+
+            return new WalletValidationResult(true, isArchived, currency);
         }
         catch (Exception ex)
         {

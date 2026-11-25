@@ -1,5 +1,6 @@
 using Microsoft.EntityFrameworkCore;
 using SharedKernel.Extensions;
+using SharedKernel.Messaging;
 using CategoryService.Data;
 using CategoryService.Services;
 
@@ -28,11 +29,16 @@ builder.Services.AddHttpClient<ITransactionClient, TransactionClient>(client =>
     client.Timeout = TimeSpan.FromSeconds(3);
 });
 
+builder.Services.AddSingleton<IEventPublisher, RabbitMqEventPublisher>();
+
 // Cấu hình JWT Bearer chung từ SharedKernel
 builder.Services.AddJwtAuthentication(builder.Configuration);
 
 // Cấu hình Consul Service Discovery từ SharedKernel
 builder.Services.AddConsulConfig(builder.Configuration);
+
+// Chuẩn hóa Health Checks & Prometheus Metrics (D61)
+builder.Services.AddServiceHealthChecks<CategoryDbContext>(builder.Configuration, checkRabbitMq: true);
 
 var app = builder.Build();
 
@@ -58,14 +64,8 @@ if (app.Environment.IsDevelopment())
 app.UseAuthentication();
 app.UseAuthorization();
 
-// Endpoint kiểm tra sức khỏe dịch vụ
-app.MapGet("/health", () => Results.Ok(new
-{
-    status = "healthy",
-    service = "CategoryService",
-    port = 8005,
-    timestamp = DateTime.UtcNow
-}));
+// Endpoint kiểm tra sức khỏe & metrics (D61)
+app.UseServiceHealthAndMetrics("CategoryService");
 
 // Đăng ký dịch vụ với Consul
 app.UseConsulServiceRegistration(builder.Configuration, app.Lifetime);

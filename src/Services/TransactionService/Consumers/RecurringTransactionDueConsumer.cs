@@ -122,8 +122,10 @@ public class RecurringTransactionDueConsumer : BaseRabbitMqConsumer<RecurringTra
                 WalletId = tx.WalletId,
                 CategoryId = tx.CategoryId ?? Guid.Empty,
                 CategoryParentId = catResult.ParentId,
+                CategoryName = catResult.Name,
                 Type = (int)tx.Type,
                 Amount = tx.Amount,
+                Currency = walletResult.Currency,
                 TransactionDate = tx.TransactionDate,
                 Note = tx.Note
             }, "transaction.created", cancellationToken);

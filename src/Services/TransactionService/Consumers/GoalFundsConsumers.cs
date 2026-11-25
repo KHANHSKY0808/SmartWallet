@@ -3,6 +3,7 @@ using SharedKernel.Events.EventContracts;
 using SharedKernel.Messaging;
 using TransactionService.Data;
 using TransactionService.Models;
+using TransactionService.Services;
 
 namespace TransactionService.Consumers;
 
@@ -70,6 +71,31 @@ public class GoalFundsDepositedConsumer : BaseRabbitMqConsumer<GoalFundsDeposite
         await context.Transactions.AddAsync(tx, cancellationToken);
         await context.SaveChangesAsync(cancellationToken);
         _logger.LogInformation("Đã ghi nhận giao dịch chuyển tiền mục tiêu Type=3 (TxId: {TxId})", tx.Id);
+
+        var eventPublisher = scope.ServiceProvider.GetService<IEventPublisher>();
+        if (eventPublisher != null)
+        {
+            string currency = "VND";
+            var walletClient = scope.ServiceProvider.GetService<IWalletClient>();
+            if (walletClient != null)
+            {
+                var wRes = await walletClient.ValidateWalletAsync(tx.WalletId, null, cancellationToken);
+                if (wRes.Exists) currency = wRes.Currency;
+            }
+
+            await eventPublisher.PublishAsync(new TransactionCreatedEvent
+            {
+                TransactionId = tx.Id,
+                UserId = tx.UserId,
+                WalletId = tx.WalletId,
+                CategoryId = Guid.Empty,
+                Type = (int)tx.Type,
+                Amount = tx.Amount,
+                Currency = currency,
+                TransactionDate = tx.TransactionDate,
+                Note = tx.Note
+            }, "transaction.created", cancellationToken);
+        }
     }
 }
 
@@ -136,5 +162,33 @@ public class GoalFundsWithdrawnConsumer : BaseRabbitMqConsumer<GoalFundsWithdraw
         await context.Transactions.AddAsync(tx, cancellationToken);
         await context.SaveChangesAsync(cancellationToken);
         _logger.LogInformation("Đã ghi nhận giao dịch rút tiền mục tiêu Type=3 (TxId: {TxId})", tx.Id);
+
+        var eventPublisher = scope.ServiceProvider.GetService<IEventPublisher>();
+        if (eventPublisher != null)
+        {
+            string currency = !string.IsNullOrWhiteSpace(@event.Currency) ? @event.Currency : "VND";
+            if (string.IsNullOrWhiteSpace(@event.Currency))
+            {
+                var walletClient = scope.ServiceProvider.GetService<IWalletClient>();
+                if (walletClient != null)
+                {
+                    var wRes = await walletClient.ValidateWalletAsync(tx.WalletId, null, cancellationToken);
+                    if (wRes.Exists) currency = wRes.Currency;
+                }
+            }
+
+            await eventPublisher.PublishAsync(new TransactionCreatedEvent
+            {
+                TransactionId = tx.Id,
+                UserId = tx.UserId,
+                WalletId = tx.WalletId,
+                CategoryId = Guid.Empty,
+                Type = (int)tx.Type,
+                Amount = tx.Amount,
+                Currency = currency,
+                TransactionDate = tx.TransactionDate,
+                Note = tx.Note
+            }, "transaction.created", cancellationToken);
+        }
     }
 }

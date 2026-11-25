@@ -198,6 +198,7 @@ public class TransactionsController : ControllerBase
 
         // Kiểm tra Category nếu được truyền
         Guid? categoryParentId = null;
+        string? categoryName = null;
         if (request.CategoryId.HasValue)
         {
             var catResult = await _categoryClient.ValidateCategoryAsync(request.CategoryId.Value, token);
@@ -212,6 +213,7 @@ public class TransactionsController : ControllerBase
             }
 
             categoryParentId = catResult.ParentId;
+            categoryName = catResult.Name;
         }
 
         if (request.TagIds != null && request.TagIds.Count > 0)
@@ -285,8 +287,10 @@ public class TransactionsController : ControllerBase
                     WalletId = tx.WalletId,
                     CategoryId = tx.CategoryId ?? Guid.Empty,
                     CategoryParentId = categoryParentId,
+                    CategoryName = categoryName,
                     Type = (int)tx.Type,
                     Amount = tx.Amount,
+                    Currency = walletResult.Currency,
                     TransactionDate = tx.TransactionDate,
                     Note = tx.Note
                 }, "transaction.created");
@@ -355,7 +359,8 @@ public class TransactionsController : ControllerBase
 
         var token = GetBearerToken();
 
-        // Validate ví mới nếu đổi ví (N13: kiểm tra cả isArchived)
+        // Validate ví mới nếu đổi ví (N13: kiểm tra cả isArchived) & lấy Currency (D58)
+        string newWalletCurrency = "VND";
         if (request.WalletId != tx.WalletId)
         {
             var walletResult = await _walletClient.ValidateWalletAsync(request.WalletId, token);
@@ -366,6 +371,15 @@ public class TransactionsController : ControllerBase
             if (walletResult.IsArchived)
             {
                 return BadRequest(new { code = "WALLET_ARCHIVED", message = "Không thể chuyển giao dịch sang ví đã lưu trữ/đóng" });
+            }
+            newWalletCurrency = walletResult.Currency;
+        }
+        else
+        {
+            var walletResult = await _walletClient.ValidateWalletAsync(request.WalletId, token);
+            if (walletResult.Exists)
+            {
+                newWalletCurrency = walletResult.Currency;
             }
         }
 
@@ -405,22 +419,26 @@ public class TransactionsController : ControllerBase
         }
 
         Guid? oldCategoryParentId = null;
+        string? oldCategoryName = null;
         if (tx.CategoryId.HasValue)
         {
             var oldCatResult = await _categoryClient.ValidateCategoryAsync(tx.CategoryId.Value, token);
             if (oldCatResult.Exists)
             {
                 oldCategoryParentId = oldCatResult.ParentId;
+                oldCategoryName = oldCatResult.Name;
             }
         }
 
         Guid? newCategoryParentId = null;
+        string? newCategoryName = null;
         // Validate danh mục nếu có
         if (request.CategoryId.HasValue)
         {
             if (request.CategoryId == tx.CategoryId)
             {
                 newCategoryParentId = oldCategoryParentId;
+                newCategoryName = oldCategoryName;
             }
             else
             {
@@ -436,6 +454,7 @@ public class TransactionsController : ControllerBase
                 }
 
                 newCategoryParentId = catResult.ParentId;
+                newCategoryName = catResult.Name;
             }
         }
 
@@ -488,10 +507,12 @@ public class TransactionsController : ControllerBase
                     NewCategoryId = tx.CategoryId ?? Guid.Empty,
                     OldCategoryParentId = oldCategoryParentId,
                     NewCategoryParentId = newCategoryParentId,
+                    CategoryName = newCategoryName,
                     OldType = oldType,
                     NewType = (int)tx.Type,
                     OldAmount = oldAmount,
                     NewAmount = tx.Amount,
+                    Currency = newWalletCurrency,
                     TransactionDate = tx.TransactionDate
                 }, "transaction.updated");
             }
@@ -542,15 +563,24 @@ public class TransactionsController : ControllerBase
         }
 
         // D30: Mở DB transaction, xóa, publish có publisher confirm, rồi commit. Publish lỗi thì rollback và trả 503 EVENT_PUBLISH_FAILED
+        var token = GetBearerToken();
         Guid? categoryParentId = null;
+        string? categoryName = null;
         if (tx.CategoryId.HasValue)
         {
-            var token = GetBearerToken();
             var catResult = await _categoryClient.ValidateCategoryAsync(tx.CategoryId.Value, token);
             if (catResult.Exists)
             {
                 categoryParentId = catResult.ParentId;
+                categoryName = catResult.Name;
             }
+        }
+
+        string walletCurrency = "VND";
+        var walletRes = await _walletClient.ValidateWalletAsync(tx.WalletId, token);
+        if (walletRes.Exists)
+        {
+            walletCurrency = walletRes.Currency;
         }
 
         using var dbTx = await _context.Database.BeginTransactionAsync();
@@ -569,8 +599,10 @@ public class TransactionsController : ControllerBase
                     WalletId = tx.WalletId,
                     CategoryId = tx.CategoryId ?? Guid.Empty,
                     CategoryParentId = categoryParentId,
+                    CategoryName = categoryName,
                     Type = (int)tx.Type,
                     Amount = tx.Amount,
+                    Currency = walletCurrency,
                     ReceiptFileId = tx.ReceiptFileId
                 }, "transaction.deleted");
             }
@@ -635,6 +667,7 @@ public class TransactionsController : ControllerBase
 
                 if (_eventPublisher != null)
                 {
+                    var walletRes = await _walletClient.ValidateWalletAsync(tx.WalletId, token);
                     await _eventPublisher.PublishAsync(new TransactionUpdatedEvent
                     {
                         TransactionId = tx.Id,
@@ -645,10 +678,12 @@ public class TransactionsController : ControllerBase
                         NewCategoryId = request.ReplacementCategoryId,
                         OldCategoryParentId = oldCatResult.Exists ? oldCatResult.ParentId : null,
                         NewCategoryParentId = replacementResult.ParentId,
+                        CategoryName = replacementResult.Name,
                         OldType = (int)tx.Type,
                         NewType = (int)tx.Type,
                         OldAmount = tx.Amount,
                         NewAmount = tx.Amount,
+                        Currency = walletRes.Exists ? walletRes.Currency : "VND",
                         TransactionDate = tx.TransactionDate
                     }, "transaction.updated");
                 }

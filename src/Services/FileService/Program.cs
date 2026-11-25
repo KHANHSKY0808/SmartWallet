@@ -1,4 +1,4 @@
-﻿using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore;
 using SharedKernel.Extensions;
 using FileService.Consumers;
 using FileService.Data;
@@ -27,6 +27,9 @@ builder.Services.AddJwtAuthentication(builder.Configuration);
 // Cấu hình Consul Service Discovery từ SharedKernel
 builder.Services.AddConsulConfig(builder.Configuration);
 
+// Chuẩn hóa Health Checks & Prometheus Metrics (D61)
+builder.Services.AddServiceHealthChecks<FileDbContext>(builder.Configuration, checkRabbitMq: true);
+
 // Cấu hình RabbitMQ Consumer và Background Services
 builder.Services.AddHostedService<TransactionDeletedConsumer>();
 builder.Services.AddHostedService<OrphanFileCleanupService>();
@@ -54,14 +57,8 @@ if (app.Environment.IsDevelopment())
 app.UseAuthentication();
 app.UseAuthorization();
 
-// Endpoint kiểm tra sức khỏe dịch vụ
-app.MapGet("/health", () => Results.Ok(new
-{
-    status = "healthy",
-    service = "FileService",
-    port = 8012,
-    timestamp = DateTime.UtcNow
-}));
+// Endpoint kiểm tra sức khỏe & metrics (D61)
+app.UseServiceHealthAndMetrics("FileService");
 
 // Đăng ký dịch vụ với Consul
 app.UseConsulServiceRegistration(builder.Configuration, app.Lifetime);

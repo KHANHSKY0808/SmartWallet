@@ -1,4 +1,4 @@
-﻿using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore;
 using SharedKernel.Extensions;
 using SharedKernel.Messaging;
 using SavingGoalService.Consumers;
@@ -52,6 +52,9 @@ builder.Services.AddJwtAuthentication(builder.Configuration);
 // Cấu hình Consul Discovery
 builder.Services.AddConsulConfig(builder.Configuration);
 
+// Chuẩn hóa Health Checks & Prometheus Metrics (D61)
+builder.Services.AddServiceHealthChecks<SavingGoalDbContext>(builder.Configuration, checkRabbitMq: true);
+
 var app = builder.Build();
 
 // Khởi tạo Database và đặt SQLite WAL mode
@@ -85,7 +88,7 @@ app.UseAuthorization();
 
 app.MapControllers();
 
-app.MapGet("/health", () => Results.Ok(new { status = "Healthy", service = "SavingGoalService" }));
+app.UseServiceHealthAndMetrics("SavingGoalService");
 
 // Tự động đăng ký Consul khi khởi động
 app.UseConsulServiceRegistration(builder.Configuration, app.Lifetime);

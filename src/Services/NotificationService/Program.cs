@@ -26,6 +26,7 @@ builder.Services.AddHostedService<BudgetThresholdReachedConsumer>();
 builder.Services.AddHostedService<GoalCompletedConsumer>();
 builder.Services.AddHostedService<DueReminderConsumer>();
 builder.Services.AddHostedService<RecurringTransactionFailedConsumer>();
+builder.Services.AddHostedService<ExportCompletedConsumer>();
 
 // Khai báo topology queue thông báo
 try
@@ -38,6 +39,7 @@ try
     RabbitMqTopology.DeclareConsumerQueue(ch, "notification.goal-completed", "goal.completed");
     RabbitMqTopology.DeclareConsumerQueue(ch, "notification.due-reminder", "reminder.due");
     RabbitMqTopology.DeclareConsumerQueue(ch, "notification.recurring-failed", "recurring.failed");
+    RabbitMqTopology.DeclareConsumerQueue(ch, "notification.export-completed", "report.export_completed");
 }
 catch (Exception)
 {
@@ -49,6 +51,9 @@ builder.Services.AddJwtAuthentication(builder.Configuration);
 
 // Cấu hình Consul Service Discovery từ SharedKernel
 builder.Services.AddConsulConfig(builder.Configuration);
+
+// Chuẩn hóa Health Checks & Prometheus Metrics (D61)
+builder.Services.AddServiceHealthChecks<NotificationDbContext>(builder.Configuration, checkRabbitMq: true);
 
 var app = builder.Build();
 
@@ -80,14 +85,8 @@ if (app.Environment.IsDevelopment())
 app.UseAuthentication();
 app.UseAuthorization();
 
-// Endpoint kiểm tra sức khỏe dịch vụ
-app.MapGet("/health", () => Results.Ok(new
-{
-    status = "healthy",
-    service = "NotificationService",
-    port = 8010,
-    timestamp = DateTime.UtcNow
-}));
+// Endpoint kiểm tra sức khỏe & metrics (D61)
+app.UseServiceHealthAndMetrics("NotificationService");
 
 // Đăng ký dịch vụ với Consul
 app.UseConsulServiceRegistration(builder.Configuration, app.Lifetime);

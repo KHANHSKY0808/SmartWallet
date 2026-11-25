@@ -42,10 +42,11 @@ builder.Services.AddHttpClient<ITransactionClient, TransactionClient>(client =>
 
 builder.Services.AddSingleton<IEventPublisher, RabbitMqEventPublisher>();
 
-// Đăng ký RabbitMQ Consumers cho các sự kiện giao dịch
+// Đăng ký RabbitMQ Consumers cho các sự kiện giao dịch & danh mục
 builder.Services.AddHostedService<TransactionCreatedConsumer>();
 builder.Services.AddHostedService<TransactionUpdatedConsumer>();
 builder.Services.AddHostedService<TransactionDeletedConsumer>();
+builder.Services.AddHostedService<CategoryUpdatedConsumer>();
 
 // Khai báo topology queue giao dịch
 try
@@ -57,6 +58,7 @@ try
     RabbitMqTopology.DeclareConsumerQueue(ch, "budget.transaction-created", "transaction.created");
     RabbitMqTopology.DeclareConsumerQueue(ch, "budget.transaction-updated", "transaction.updated");
     RabbitMqTopology.DeclareConsumerQueue(ch, "budget.transaction-deleted", "transaction.deleted");
+    RabbitMqTopology.DeclareConsumerQueue(ch, "budget.category-updated", "category.updated");
 }
 catch (Exception)
 {
@@ -68,6 +70,9 @@ builder.Services.AddJwtAuthentication(builder.Configuration);
 
 // Cấu hình Consul Service Discovery từ SharedKernel
 builder.Services.AddConsulConfig(builder.Configuration);
+
+// Chuẩn hóa Health Checks & Prometheus Metrics (D61)
+builder.Services.AddServiceHealthChecks<BudgetDbContext>(builder.Configuration, checkRabbitMq: true);
 
 var app = builder.Build();
 
@@ -99,14 +104,8 @@ if (app.Environment.IsDevelopment())
 app.UseAuthentication();
 app.UseAuthorization();
 
-// Endpoint kiểm tra sức khỏe dịch vụ
-app.MapGet("/health", () => Results.Ok(new
-{
-    status = "healthy",
-    service = "BudgetService",
-    port = 8006,
-    timestamp = DateTime.UtcNow
-}));
+// Endpoint kiểm tra sức khỏe & metrics (D61)
+app.UseServiceHealthAndMetrics("BudgetService");
 
 // Đăng ký dịch vụ với Consul
 app.UseConsulServiceRegistration(builder.Configuration, app.Lifetime);

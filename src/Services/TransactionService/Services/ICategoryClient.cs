@@ -2,7 +2,7 @@ using System.Text.Json;
 
 namespace TransactionService.Services;
 
-public record CategoryValidationResult(bool Exists, int? Type, Guid? ParentId = null);
+public record CategoryValidationResult(bool Exists, int? Type, Guid? ParentId = null, string? Name = null);
 
 public interface ICategoryClient
 {
@@ -48,7 +48,8 @@ public class CategoryClient : ICategoryClient
             }
 
             Guid? parentId = null;
-            if (doc.RootElement.TryGetProperty("parentId", out var parentProp) && parentProp.ValueKind == JsonValueKind.String)
+            if ((doc.RootElement.TryGetProperty("parentId", out var parentProp) ||
+                 doc.RootElement.TryGetProperty("ParentId", out parentProp)) && parentProp.ValueKind == JsonValueKind.String)
             {
                 if (Guid.TryParse(parentProp.GetString(), out var parsedParentId))
                 {
@@ -56,7 +57,14 @@ public class CategoryClient : ICategoryClient
                 }
             }
 
-            return new CategoryValidationResult(true, type, parentId);
+            string? name = null;
+            if ((doc.RootElement.TryGetProperty("name", out var nameProp) ||
+                 doc.RootElement.TryGetProperty("Name", out nameProp)) && nameProp.ValueKind == JsonValueKind.String)
+            {
+                name = nameProp.GetString();
+            }
+
+            return new CategoryValidationResult(true, type, parentId, name);
         }
         catch (Exception ex)
         {

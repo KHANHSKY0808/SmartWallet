@@ -57,6 +57,7 @@ public static class JwtAuthExtensions
         {
             options.AddPolicy("AdminOnly", policy => policy.RequireRole("Admin"));
             options.AddPolicy("UserOnly", policy => policy.RequireRole("User"));
+            options.AddPolicy("SystemOnly", policy => policy.RequireRole("System"));
             options.AddPolicy("Authenticated", policy => policy.RequireAuthenticatedUser());
         });
 

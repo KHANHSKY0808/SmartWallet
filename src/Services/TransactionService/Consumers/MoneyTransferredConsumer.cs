@@ -3,6 +3,7 @@ using SharedKernel.Events.EventContracts;
 using SharedKernel.Messaging;
 using TransactionService.Data;
 using TransactionService.Models;
+using TransactionService.Services;
 
 namespace TransactionService.Consumers;
 
@@ -64,5 +65,31 @@ public class MoneyTransferredConsumer : BaseRabbitMqConsumer<MoneyTransferredEve
         await context.SaveChangesAsync(cancellationToken);
 
         _logger.LogInformation("Đã tạo bản ghi Transaction Type=3 cho TransferId {TransferId}", @event.TransferId);
+
+        // Phát TransactionCreatedEvent (Type=3) để ReportService đồng bộ đầy đủ cho Export sheet GiaoDich (D60)
+        var eventPublisher = scope.ServiceProvider.GetService<IEventPublisher>();
+        if (eventPublisher != null)
+        {
+            string currency = "VND";
+            var walletClient = scope.ServiceProvider.GetService<IWalletClient>();
+            if (walletClient != null)
+            {
+                var wRes = await walletClient.ValidateWalletAsync(tx.WalletId, null, cancellationToken);
+                if (wRes.Exists) currency = wRes.Currency;
+            }
+
+            await eventPublisher.PublishAsync(new TransactionCreatedEvent
+            {
+                TransactionId = tx.Id,
+                UserId = tx.UserId,
+                WalletId = tx.WalletId,
+                CategoryId = Guid.Empty,
+                Type = (int)tx.Type,
+                Amount = tx.Amount,
+                Currency = currency,
+                TransactionDate = tx.TransactionDate,
+                Note = tx.Note
+            }, "transaction.created", cancellationToken);
+        }
     }
 }

@@ -15,8 +15,10 @@ public record TransactionCreatedEvent : IntegrationEvent
     public Guid WalletId { get; init; }
     public Guid CategoryId { get; init; }
     public Guid? CategoryParentId { get; init; }
+    public string? CategoryName { get; init; }
     public int Type { get; init; } // 1: Expense, 2: Income, 3: Transfer
     public decimal Amount { get; init; }
+    public string Currency { get; init; } = "VND";
     public DateTime TransactionDate { get; init; }
     public string? Note { get; init; }
 }
@@ -31,10 +33,12 @@ public record TransactionUpdatedEvent : IntegrationEvent
     public Guid NewCategoryId { get; init; }
     public Guid? OldCategoryParentId { get; init; }
     public Guid? NewCategoryParentId { get; init; }
+    public string? CategoryName { get; init; }
     public int OldType { get; init; }
     public int NewType { get; init; }
     public decimal OldAmount { get; init; }
     public decimal NewAmount { get; init; }
+    public string Currency { get; init; } = "VND";
     public DateTime TransactionDate { get; init; }
 }
 
@@ -45,8 +49,10 @@ public record TransactionDeletedEvent : IntegrationEvent
     public Guid WalletId { get; init; }
     public Guid CategoryId { get; init; }
     public Guid? CategoryParentId { get; init; }
+    public string? CategoryName { get; init; }
     public int Type { get; init; }
     public decimal Amount { get; init; }
+    public string Currency { get; init; } = "VND";
     public Guid? ReceiptFileId { get; init; }
 }
 
@@ -153,6 +159,21 @@ public record DueReminderEvent : IntegrationEvent
     public string ReminderType { get; init; } = "Reminder"; // "Recurring" | "Debt" | "Overdue"
     public DateOnly DueDate { get; init; }
     public decimal Amount { get; init; }
+}
+
+public record CategoryUpdatedEvent : IntegrationEvent
+{
+    public Guid CategoryId { get; init; }
+    public Guid? UserId { get; init; }
+    public string Name { get; init; } = string.Empty;
+    public Guid? ParentId { get; init; }
+}
+
+public record ExportCompletedEvent : IntegrationEvent
+{
+    public Guid JobId { get; init; }
+    public Guid UserId { get; init; }
+    public string Format { get; init; } = "xlsx"; // "xlsx" | "pdf"
 }
 
 
