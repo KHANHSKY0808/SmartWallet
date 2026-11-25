@@ -74,15 +74,17 @@ import { AuthService } from '../../../core/services/auth.service';
       justify-content: center;
       align-items: center;
       min-height: 80vh;
-      padding: 1rem;
+      padding: 0.5rem;
+      box-sizing: border-box;
     }
     .auth-card {
       background: #ffffff;
       border-radius: 8px;
       box-shadow: 0 4px 12px rgba(0,0,0,0.1);
-      padding: 2.5rem;
+      padding: 1.5rem;
       width: 100%;
       max-width: 420px;
+      box-sizing: border-box;
     }
     h2 {
       margin: 0 0 0.5rem 0;
