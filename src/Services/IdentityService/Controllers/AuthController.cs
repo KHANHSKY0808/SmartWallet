@@ -16,6 +16,7 @@ namespace IdentityService.Controllers;
 public class AuthController : ControllerBase
 {
     private static readonly string DummyPasswordHash = "$2a$11$N9qo8uLOickgx2ZMRZoMyeIjZAgcfl7p92ldGxad68LJZdL17lhWy";
+    private const string ResendConfirmationMessage = "Nếu email tồn tại và chưa được kích hoạt, hệ thống đã gửi lại email xác nhận.";
 
     private readonly IdentityDbContext _context;
     private readonly IPasswordHasher _passwordHasher;
@@ -24,6 +25,7 @@ public class AuthController : ControllerBase
     private readonly ILogger<AuthController> _logger;
     private readonly string _frontendBaseUrl;
     private readonly TimeProvider _timeProvider;
+    private readonly IResendConfirmationRateLimiter? _resendLimiter;
 
     public AuthController(
         IdentityDbContext context,
@@ -32,7 +34,8 @@ public class AuthController : ControllerBase
         ILogger<AuthController> logger,
         IEventPublisher? eventPublisher = null,
         IConfiguration? configuration = null,
-        TimeProvider? timeProvider = null)
+        TimeProvider? timeProvider = null,
+        IResendConfirmationRateLimiter? resendLimiter = null)
     {
         _context = context;
         _passwordHasher = passwordHasher;
@@ -41,6 +44,7 @@ public class AuthController : ControllerBase
         _eventPublisher = eventPublisher;
         _frontendBaseUrl = (configuration?["App:FrontendBaseUrl"] ?? "http://localhost:4200").TrimEnd('/');
         _timeProvider = timeProvider ?? TimeProvider.System;
+        _resendLimiter = resendLimiter;
     }
 
     [HttpPost("register")]
@@ -119,7 +123,7 @@ public class AuthController : ControllerBase
             }
             catch (Exception ex)
             {
-                _logger.LogWarning(ex, "Failed to publish EmailRequestedEvent for UserId {UserId}", user.Id);
+                _logger.LogError(ex, "Failed to publish EmailRequestedEvent for UserId {UserId}", user.Id);
             }
 
             try
@@ -145,6 +149,94 @@ public class AuthController : ControllerBase
             message = "Đăng ký thành công! Vui lòng kiểm tra email để kích hoạt tài khoản.",
             userId = user.Id
         });
+    }
+
+    /// <summary>D67 / N44: Gửi lại email xác nhận cho tài khoản PendingConfirm, giới hạn 1 lần/60s/email.</summary>
+    [HttpPost("resend-confirmation")]
+    public async Task<IActionResult> ResendConfirmation([FromBody] ResendConfirmationRequest request)
+    {
+        if (!ModelState.IsValid)
+        {
+            return BadRequest(ModelState);
+        }
+
+        var normalizedEmail = request.Email.Trim().ToLowerInvariant();
+        var nowOffset = _timeProvider.GetUtcNow();
+        var now = nowOffset.UtcDateTime;
+
+        if (_resendLimiter != null && _resendLimiter.IsThrottled(normalizedEmail, nowOffset))
+        {
+            return Ok(new { message = ResendConfirmationMessage });
+        }
+
+        var user = await _context.Users.FirstOrDefaultAsync(u => u.Email.ToLower() == normalizedEmail);
+        if (user == null || user.Status != UserStatus.PendingConfirm)
+        {
+            _resendLimiter?.RecordSent(normalizedEmail, nowOffset);
+            return Ok(new { message = ResendConfirmationMessage });
+        }
+
+        await using var tx = await _context.Database.BeginTransactionAsync();
+
+        var unusedTokens = await _context.UserTokens
+            .Where(ut => ut.UserId == user.Id && ut.Type == UserTokenType.EmailConfirm && ut.UsedAt == null)
+            .ToListAsync();
+        foreach (var t in unusedTokens)
+        {
+            t.UsedAt = now;
+        }
+
+        var rawToken = _tokenService.GenerateRawToken();
+        var tokenHash = _tokenService.HashToken(rawToken);
+        var newUserToken = new UserToken
+        {
+            Id = Guid.NewGuid(),
+            UserId = user.Id,
+            Type = UserTokenType.EmailConfirm,
+            TokenHash = tokenHash,
+            ExpiresAt = now.AddHours(24),
+            CreatedAt = now
+        };
+        _context.UserTokens.Add(newUserToken);
+        await _context.SaveChangesAsync();
+
+        var confirmLink = $"{_frontendBaseUrl}/confirm-email?token={rawToken}";
+        var fullName = string.IsNullOrWhiteSpace(user.FullName) ? normalizedEmail.Split('@')[0] : user.FullName;
+        _logger.LogInformation("Prepared ResendConfirmEmail event for UserId {UserId} with link base {BaseUrl}/confirm-email?token=[REDACTED]",
+            user.Id, _frontendBaseUrl);
+
+        if (_eventPublisher != null)
+        {
+            try
+            {
+                await _eventPublisher.PublishAsync(new EmailRequestedEvent
+                {
+                    UserId = user.Id,
+                    To = user.Email,
+                    Template = "ConfirmEmail",
+                    Data = new Dictionary<string, string>
+                    {
+                        ["confirmLink"] = confirmLink,
+                        ["fullName"] = fullName
+                    }
+                }, "identity.email_requested");
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Failed to publish resend EmailRequestedEvent for UserId {UserId}", user.Id);
+                await tx.RollbackAsync();
+                return StatusCode(503, new
+                {
+                    code = "EVENT_PUBLISH_FAILED",
+                    message = "Hệ thống gửi email đang tạm thời gián đoạn. Vui lòng thử lại sau ít phút."
+                });
+            }
+        }
+
+        await tx.CommitAsync();
+        _resendLimiter?.RecordSent(normalizedEmail, nowOffset);
+
+        return Ok(new { message = ResendConfirmationMessage });
     }
 
     [HttpGet("confirm-email")]

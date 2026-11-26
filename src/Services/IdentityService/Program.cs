@@ -34,6 +34,8 @@ builder.Services.AddSingleton<IConnectionMultiplexer>(_ =>
     return ConnectionMultiplexer.Connect(opts);
 });
 builder.Services.AddSingleton<ISessionRevocationStore, RedisSessionRevocationStore>();
+builder.Services.AddSingleton<IResendConfirmationRateLimiter, InMemoryResendConfirmationRateLimiter>();
+builder.Services.AddSingleton(TimeProvider.System);
 
 // Đăng ký Services nghiệp vụ Identity (D62: bỏ LoggingEmailSender & Channel, phát EmailRequestedEvent qua RabbitMQ)
 builder.Services.AddScoped<IPasswordHasher, PasswordHasher>();

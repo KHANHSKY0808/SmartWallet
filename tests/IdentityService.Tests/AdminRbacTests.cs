@@ -10,8 +10,12 @@ using Microsoft.AspNetCore.Mvc;
 using Microsoft.Data.Sqlite;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Configuration;
+using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
+using SharedKernel.Events;
+using SharedKernel.Events.EventContracts;
 using SharedKernel.Extensions;
+using SharedKernel.Messaging;
 
 namespace IdentityService.Tests;
 
@@ -201,6 +205,71 @@ public class AdminRbacTests : IDisposable
         Assert.DoesNotContain(ctorParams, p => p.ParameterType.Name.Contains("EmailSender", StringComparison.OrdinalIgnoreCase));
     }
 
+    [Fact]
+    public async Task Test_D67_N44_RegisterPublishFailsLogsError_ThenResendConfirmationDeliversEmail()
+    {
+        await DbInitializer.InitializeAsync(_context, NullLogger.Instance);
+
+        var publisher = new ToggleableEventPublisher { ShouldThrow = true };
+        var captureLogger = new CapturingLogger<AuthController>();
+        var clock = new FakeClock(new DateTimeOffset(2026, 11, 26, 12, 0, 0, TimeSpan.Zero));
+        var limiter = new InMemoryResendConfirmationRateLimiter();
+        var tokenService = new TokenService(new ConfigurationBuilder().AddInMemoryCollection(new Dictionary<string, string?>
+        {
+            ["Jwt:SigningKey"] = "SuperSecretUnitTestKeyAtLeast32BytesLong!"
+        }).Build());
+
+        var ctrl = new AuthController(_context, _hasher, tokenService, captureLogger, publisher, null, clock, limiter);
+
+        // 1. Register while broker is down -> 201 (X04), logs Error, PendingConfirm user created
+        var regResult = Assert.IsType<ObjectResult>(await ctrl.Register(new DTOs.RegisterRequest
+        {
+            Email = "n44user@qa.local",
+            Password = "Password@123",
+            ConfirmPassword = "Password@123",
+            FullName = "N44 User"
+        }));
+        Assert.Equal(201, regResult.StatusCode);
+        Assert.Contains(captureLogger.Entries, e => e.Level == LogLevel.Error && e.Message.Contains("EmailRequestedEvent"));
+        Assert.Empty(publisher.PublishedEvents);
+
+        var firstToken = await _context.UserTokens.SingleAsync();
+        Assert.Null(firstToken.UsedAt);
+
+        // 2. Resend while broker still down -> 503 EVENT_PUBLISH_FAILED and rolls back
+        var failResend = Assert.IsType<ObjectResult>(await ctrl.ResendConfirmation(new DTOs.ResendConfirmationRequest { Email = "n44user@qa.local" }));
+        Assert.Equal(503, failResend.StatusCode);
+        Assert.Contains("EVENT_PUBLISH_FAILED", JsonSerializer.Serialize(failResend.Value));
+
+        // 3. Broker recovers -> Resend succeeds (200), invalidates old token, publishes EmailRequestedEvent
+        publisher.ShouldThrow = false;
+        var okResend1 = Assert.IsType<OkObjectResult>(await ctrl.ResendConfirmation(new DTOs.ResendConfirmationRequest { Email = "n44user@qa.local" }));
+        Assert.Equal(200, okResend1.StatusCode);
+        var emailEv = Assert.Single(publisher.PublishedEvents.OfType<EmailRequestedEvent>());
+        Assert.Equal("n44user@qa.local", emailEv.To);
+        Assert.Equal("ConfirmEmail", emailEv.Template);
+        Assert.Contains("/confirm-email?token=", emailEv.Data["confirmLink"]);
+
+        var oldTokenReloaded = await _context.UserTokens.FirstAsync(t => t.Id == firstToken.Id);
+        Assert.NotNull(oldTokenReloaded.UsedAt);
+        Assert.Equal(2, await _context.UserTokens.CountAsync());
+
+        // 4. Rate limit: calling again within 60s returns same 200 message without publishing a duplicate event
+        clock.Advance(TimeSpan.FromSeconds(30));
+        var throttled = Assert.IsType<OkObjectResult>(await ctrl.ResendConfirmation(new DTOs.ResendConfirmationRequest { Email = "n44user@qa.local" }));
+        Assert.Equal(JsonSerializer.Serialize(okResend1.Value), JsonSerializer.Serialize(throttled.Value));
+        Assert.Single(publisher.PublishedEvents.OfType<EmailRequestedEvent>());
+
+        // 5. After 60s -> allowed again
+        clock.Advance(TimeSpan.FromSeconds(31));
+        var okResend2 = Assert.IsType<OkObjectResult>(await ctrl.ResendConfirmation(new DTOs.ResendConfirmationRequest { Email = "n44user@qa.local" }));
+        Assert.Equal(2, publisher.PublishedEvents.OfType<EmailRequestedEvent>().Count());
+
+        // 6. Unknown email -> identical 200 body (no enumeration)
+        var unknown = Assert.IsType<OkObjectResult>(await ctrl.ResendConfirmation(new DTOs.ResendConfirmationRequest { Email = "missing@qa.local" }));
+        Assert.Equal(JsonSerializer.Serialize(okResend1.Value), JsonSerializer.Serialize(unknown.Value));
+    }
+
     public void Dispose()
     {
         _context.Dispose();
@@ -212,6 +281,36 @@ public class AdminRbacTests : IDisposable
         public Task SetLockedAsync(Guid userId, CancellationToken cancellationToken = default) => Task.CompletedTask;
         public Task ClearLockedAsync(Guid userId, CancellationToken cancellationToken = default) => Task.CompletedTask;
         public Task SetValidAfterNowAsync(Guid userId, CancellationToken cancellationToken = default) => Task.CompletedTask;
+    }
+
+    private sealed class ToggleableEventPublisher : IEventPublisher
+    {
+        public bool ShouldThrow { get; set; }
+        public List<IntegrationEvent> PublishedEvents { get; } = new();
+        public Task PublishAsync<TEvent>(TEvent @event, string routingKey, CancellationToken cancellationToken = default)
+            where TEvent : IntegrationEvent
+        {
+            if (ShouldThrow) throw new InvalidOperationException("RabbitMQ down");
+            PublishedEvents.Add(@event);
+            return Task.CompletedTask;
+        }
+    }
+
+    private sealed class CapturingLogger<T> : ILogger<T>
+    {
+        public List<(LogLevel Level, string Message)> Entries { get; } = new();
+        public IDisposable? BeginScope<TState>(TState state) where TState : notnull => null;
+        public bool IsEnabled(LogLevel logLevel) => true;
+        public void Log<TState>(LogLevel logLevel, EventId eventId, TState state, Exception? exception, Func<TState, Exception?, string> formatter)
+            => Entries.Add((logLevel, formatter(state, exception)));
+    }
+
+    private sealed class FakeClock : TimeProvider
+    {
+        private DateTimeOffset _now;
+        public FakeClock(DateTimeOffset initial) => _now = initial;
+        public override DateTimeOffset GetUtcNow() => _now;
+        public void Advance(TimeSpan ts) => _now = _now.Add(ts);
     }
 }
 

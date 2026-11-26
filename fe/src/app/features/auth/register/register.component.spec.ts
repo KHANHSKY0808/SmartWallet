@@ -12,6 +12,9 @@ describe('RegisterComponent', () => {
       register: vi.fn().mockReturnValue(of({
         message: 'Đăng ký thành công!',
         userId: 'u-123'
+      })),
+      resendConfirmation: vi.fn().mockReturnValue(of({
+        message: 'Nếu email tồn tại và chưa được kích hoạt, hệ thống đã gửi lại email xác nhận.'
       }))
     };
 
@@ -89,6 +92,29 @@ describe('RegisterComponent', () => {
     component.onSubmit();
     expect(component.errorMessage()).toContain('Email đã được sử dụng');
     expect(component.isLoading()).toBe(false);
+  });
+
+  it('D67/N44: should render resend button after registration and call resendConfirmation', () => {
+    const fixture = TestBed.createComponent(RegisterComponent);
+    const component = fixture.componentInstance;
+
+    component.registerForm.setValue({
+      fullName: 'Test Resend',
+      email: 'resend@example.com',
+      password: 'Password123',
+      confirmPassword: 'Password123'
+    });
+
+    component.onSubmit();
+    fixture.detectChanges();
+
+    const resendBtn = (fixture.nativeElement as HTMLElement).querySelector('.btn-resend') as HTMLButtonElement;
+    expect(resendBtn).toBeTruthy();
+    expect(resendBtn.textContent).toContain('Gửi lại email xác nhận');
+
+    resendBtn.click();
+    expect(authServiceMock.resendConfirmation).toHaveBeenCalledWith('resend@example.com');
+    expect(component.resendMessage()).toContain('gửi lại email xác nhận');
   });
 });
 

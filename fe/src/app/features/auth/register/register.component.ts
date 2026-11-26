@@ -25,6 +25,18 @@ function passwordMatchValidator(control: AbstractControl): { [key: string]: bool
 
         <div *ngIf="successMessage()" class="alert alert-success">
           <strong>🎉 Thành công!</strong> {{ successMessage() }}
+          <div style="margin-top: 0.75rem;">
+            <button type="button"
+                    (click)="onResendConfirmation()"
+                    [disabled]="isResending()"
+                    class="btn-resend"
+                    style="padding: 0.45rem 0.9rem; background: #1d4ed8; color: white; border: none; border-radius: 6px; font-size: 0.85rem; font-weight: 600; cursor: pointer;">
+              {{ isResending() ? 'Đang gửi...' : 'Gửi lại email xác nhận' }}
+            </button>
+          </div>
+          <p *ngIf="resendMessage()" class="resend-feedback" style="margin: 0.5rem 0 0; font-size: 0.82rem; color: #1e40af;">
+            {{ resendMessage() }}
+          </p>
         </div>
 
         <div *ngIf="errorMessage()" class="alert alert-danger">
@@ -216,8 +228,11 @@ function passwordMatchValidator(control: AbstractControl): { [key: string]: bool
 export class RegisterComponent {
   registerForm: FormGroup;
   isLoading = signal(false);
+  isResending = signal(false);
   errorMessage = signal('');
   successMessage = signal('');
+  resendMessage = signal('');
+  registeredEmail = signal('');
 
   constructor(
     private fb: FormBuilder,
@@ -244,10 +259,13 @@ export class RegisterComponent {
     this.isLoading.set(true);
     this.errorMessage.set('');
     this.successMessage.set('');
+    this.resendMessage.set('');
+    const submittedEmail = String(this.registerForm.value.email || '').trim();
 
     this.authService.register(this.registerForm.value).subscribe({
       next: res => {
         this.isLoading.set(false);
+        this.registeredEmail.set(submittedEmail);
         this.successMessage.set(res.message || 'Đăng ký thành công! Vui lòng kiểm tra hòm thư email để kích hoạt tài khoản.');
       },
       error: err => {
@@ -257,6 +275,24 @@ export class RegisterComponent {
         } else {
           this.errorMessage.set(err.error?.message || 'Đã có lỗi xảy ra khi đăng ký tài khoản.');
         }
+      }
+    });
+  }
+
+  onResendConfirmation(): void {
+    const email = this.registeredEmail() || String(this.registerForm.value.email || '').trim();
+    if (!email) return;
+
+    this.isResending.set(true);
+    this.resendMessage.set('');
+    this.authService.resendConfirmation(email).subscribe({
+      next: res => {
+        this.isResending.set(false);
+        this.resendMessage.set(res.message || 'Đã gửi lại yêu cầu email xác nhận.');
+      },
+      error: err => {
+        this.isResending.set(false);
+        this.resendMessage.set(err.error?.message || 'Không thể gửi lại email lúc này. Vui lòng thử lại sau.');
       }
     });
   }

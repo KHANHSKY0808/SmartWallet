@@ -38,6 +38,10 @@ export class AuthService {
     });
   }
 
+  resendConfirmation(email: string): Observable<{ message: string }> {
+    return this.http.post<{ message: string }>(`${this.apiUrl}/resend-confirmation`, { email });
+  }
+
   login(request: LoginRequest): Observable<AuthResponse> {
     this.sessionNotice.set('');
     return this.http.post<AuthResponse>(`${this.apiUrl}/login`, request).pipe(

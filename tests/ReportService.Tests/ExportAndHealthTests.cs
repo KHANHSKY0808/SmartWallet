@@ -158,12 +158,12 @@ public class ExportAndHealthTests : IDisposable
         Assert.True(pdfBytes.Length > 500);
         Assert.StartsWith("%PDF", Encoding.ASCII.GetString(pdfBytes, 0, 4));
 
-        // Render ảnh PNG mẫu để đính kèm biên bản nghiệm thu (EX-09)
+        // N47: Ghi ảnh PNG mẫu vào thư mục tạm (_tempDir), không ghi đè vào Gemini/assets/
         var images = doc.GenerateImages().ToList();
         Assert.NotEmpty(images);
-        var assetsDir = Path.GetFullPath(Path.Combine(AppContext.BaseDirectory, "..", "..", "..", "..", "..", "..", "Gemini", "assets"));
-        Directory.CreateDirectory(assetsDir);
-        File.WriteAllBytes(Path.Combine(assetsDir, "pdf_sample_6a.png"), images[0]);
+        var samplePath = Path.Combine(_tempDir, "pdf_sample_6a.png");
+        File.WriteAllBytes(samplePath, images[0]);
+        Assert.True(new FileInfo(samplePath).Length > 0);
     }
 
     [Fact]

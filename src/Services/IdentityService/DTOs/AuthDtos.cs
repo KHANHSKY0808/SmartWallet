@@ -59,6 +59,13 @@ public record ForgotPasswordRequest
     public string Email { get; init; } = string.Empty;
 }
 
+public record ResendConfirmationRequest
+{
+    [Required(ErrorMessage = "Email là bắt buộc")]
+    [EmailAddress(ErrorMessage = "Định dạng email không hợp lệ")]
+    public string Email { get; init; } = string.Empty;
+}
+
 public record ResetPasswordRequest
 {
     [Required(ErrorMessage = "Token là bắt buộc")]
