@@ -17,6 +17,118 @@ namespace TransactionService.Migrations
 #pragma warning disable 612, 618
             modelBuilder.HasAnnotation("ProductVersion", "10.0.14");
 
+            modelBuilder.Entity("TransactionService.Models.ImportJob", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("ColumnMappingJson")
+                        .HasColumnType("TEXT");
+
+                    b.Property<DateTime?>("CompletedAt")
+                        .HasColumnType("TEXT");
+
+                    b.Property<DateTime>("CreatedAt")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("ErrorMessage")
+                        .HasMaxLength(500)
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("Extension")
+                        .IsRequired()
+                        .HasMaxLength(16)
+                        .HasColumnType("TEXT");
+
+                    b.Property<int>("Failed")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<string>("FileName")
+                        .IsRequired()
+                        .HasMaxLength(255)
+                        .HasColumnType("TEXT");
+
+                    b.Property<DateTime?>("StartedAt")
+                        .HasColumnType("TEXT");
+
+                    b.Property<int>("Status")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<int>("Succeeded")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<string>("TempFilePath")
+                        .HasMaxLength(500)
+                        .HasColumnType("TEXT");
+
+                    b.Property<int>("TotalRows")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<Guid>("UserId")
+                        .HasColumnType("TEXT");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("UserId")
+                        .IsUnique()
+                        .HasDatabaseName("UX_ImportJobs_User_Active")
+                        .HasFilter("Status IN (0, 1)");
+
+                    b.HasIndex("UserId", "CreatedAt");
+
+                    b.ToTable("ImportJobs", (string)null);
+                });
+
+            modelBuilder.Entity("TransactionService.Models.ImportJobError", b =>
+                {
+                    b.Property<long>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("INTEGER");
+
+                    b.Property<string>("AmountRaw")
+                        .HasMaxLength(100)
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("CategoryRaw")
+                        .HasMaxLength(200)
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("DateRaw")
+                        .HasMaxLength(100)
+                        .HasColumnType("TEXT");
+
+                    b.Property<Guid>("ImportJobId")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("NoteRaw")
+                        .HasMaxLength(1000)
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("Reason")
+                        .IsRequired()
+                        .HasMaxLength(500)
+                        .HasColumnType("TEXT");
+
+                    b.Property<int>("RowNumber")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<string>("TypeRaw")
+                        .HasMaxLength(50)
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("WalletRaw")
+                        .HasMaxLength(200)
+                        .HasColumnType("TEXT");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("ImportJobId", "RowNumber")
+                        .IsUnique();
+
+                    b.ToTable("ImportJobErrors", (string)null);
+                });
+
             modelBuilder.Entity("TransactionService.Models.Tag", b =>
                 {
                     b.Property<Guid>("Id")
@@ -128,7 +240,8 @@ namespace TransactionService.Migrations
 
                     b.HasIndex("SourceType", "SourceId", "SourceSubId")
                         .IsUnique()
-                        .HasFilter("SourceType = 3 AND SourceSubId IS NOT NULL");
+                        .HasDatabaseName("UX_Transactions_Import_JobRow")
+                        .HasFilter("SourceType = 5 AND SourceId IS NOT NULL AND SourceSubId IS NOT NULL");
 
                     b.ToTable("Transactions", (string)null);
                 });
@@ -148,6 +261,17 @@ namespace TransactionService.Migrations
                     b.ToTable("TransactionTags", (string)null);
                 });
 
+            modelBuilder.Entity("TransactionService.Models.ImportJobError", b =>
+                {
+                    b.HasOne("TransactionService.Models.ImportJob", "ImportJob")
+                        .WithMany("Errors")
+                        .HasForeignKey("ImportJobId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.Navigation("ImportJob");
+                });
+
             modelBuilder.Entity("TransactionService.Models.TransactionTag", b =>
                 {
                     b.HasOne("TransactionService.Models.Tag", "Tag")
@@ -165,6 +289,11 @@ namespace TransactionService.Migrations
                     b.Navigation("Tag");
 
                     b.Navigation("Transaction");
+                });
+
+            modelBuilder.Entity("TransactionService.Models.ImportJob", b =>
+                {
+                    b.Navigation("Errors");
                 });
 #pragma warning restore 612, 618
         }

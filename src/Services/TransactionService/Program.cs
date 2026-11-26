@@ -47,7 +47,9 @@ builder.Services.AddHttpClient<IFileServiceClient, FileServiceClient>(client =>
 // RabbitMQ Event Publisher
 builder.Services.AddSingleton<IEventPublisher, RabbitMqEventPublisher>();
 
-// Đăng ký RabbitMQ Consumers
+// Đăng ký RabbitMQ Consumers & Import worker (D68)
+builder.Services.AddSingleton<IImportJobQueue, ImportJobQueue>();
+builder.Services.AddHostedService<ImportBackgroundService>();
 builder.Services.AddHostedService<MoneyTransferredConsumer>();
 builder.Services.AddHostedService<GoalFundsDepositedConsumer>();
 builder.Services.AddHostedService<GoalFundsWithdrawnConsumer>();

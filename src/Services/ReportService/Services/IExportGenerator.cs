@@ -25,21 +25,22 @@ public interface IExportGenerator
 
 public class ExportGenerator : IExportGenerator
 {
+    private const string EmbeddedFontFamily = "Noto Sans";
+
     static ExportGenerator()
     {
         QuestPDF.Settings.License = LicenseType.Community;
-        QuestPDF.Settings.UseSystemFonts = true;
-        var winArial = @"C:\Windows\Fonts\arial.ttf";
-        if (File.Exists(winArial))
+        QuestPDF.Settings.UseSystemFonts = false;
+
+        var assembly = typeof(ExportGenerator).Assembly;
+        foreach (var resourceName in assembly.GetManifestResourceNames()
+                     .Where(n => n.EndsWith(".ttf", StringComparison.OrdinalIgnoreCase)))
         {
-            using var s = File.OpenRead(winArial);
-            QuestPDF.Drawing.FontManager.RegisterFontFromStream(s);
-        }
-        var winArialBold = @"C:\Windows\Fonts\arialbd.ttf";
-        if (File.Exists(winArialBold))
-        {
-            using var sb = File.OpenRead(winArialBold);
-            QuestPDF.Drawing.FontManager.RegisterFontFromStream(sb);
+            using var stream = assembly.GetManifestResourceStream(resourceName);
+            if (stream is not null)
+            {
+                QuestPDF.Drawing.FontManager.RegisterFontFromStream(stream);
+            }
         }
     }
 
@@ -204,7 +205,7 @@ public class ExportGenerator : IExportGenerator
             {
                 page.Size(PageSizes.A4);
                 page.Margin(30);
-                page.DefaultTextStyle(x => x.FontFamily("Arial").FontSize(10));
+                page.DefaultTextStyle(x => x.FontFamily(EmbeddedFontFamily).FontSize(10));
 
                 page.Header().Column(col =>
                 {

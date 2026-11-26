@@ -37,6 +37,7 @@ public class BudgetDto
     public int Month { get; set; }
     public int Year { get; set; }
     public decimal CurrentSpent { get; set; }
+    public decimal Spent => CurrentSpent;
     public decimal Percent { get; set; }
     public string Status { get; set; } = "normal"; // normal (<80), warning (80-99), exceeded (>=100)
     public bool IsAlertSent80 { get; set; }

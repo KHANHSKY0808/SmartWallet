@@ -80,6 +80,7 @@ public class TransactionQueryParameters
     public decimal? MaxAmount { get; set; }
     public string? Keyword { get; set; }
     public string? TagIds { get; set; }
+    public string? SourceType { get; set; }
     public string? SortBy { get; set; } = "transactionDate";
     public string? SortOrder { get; set; } = "desc";
 }

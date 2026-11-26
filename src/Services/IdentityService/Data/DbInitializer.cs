@@ -45,7 +45,8 @@ public static class DbInitializer
                 (AppPermissions.AuditRead, "Tra cứu nhật ký kiểm toán"),
                 (AppPermissions.RatesWrite, "Cập nhật tỷ giá ngoại tệ"),
                 (AppPermissions.CategoriesDefaultsWrite, "Quản lý danh mục mặc định"),
-                (AppPermissions.HealthRead, "Giám sát sức khỏe hệ thống")
+                (AppPermissions.HealthRead, "Giám sát sức khỏe hệ thống"),
+                (AppPermissions.BackupsWrite, "Sao lưu và xem lịch sử sao lưu dữ liệu")
             };
 
             foreach (var (code, name) in permDefs)

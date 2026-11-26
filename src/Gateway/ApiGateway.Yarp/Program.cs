@@ -2,6 +2,7 @@ using System.Diagnostics;
 using System.IdentityModel.Tokens.Jwt;
 using System.Security.Claims;
 using System.Text.Json;
+using ApiGateway.Yarp.Services;
 using Microsoft.Extensions.Caching.Memory;
 using SharedKernel.Extensions;
 using StackExchange.Redis;
@@ -40,6 +41,13 @@ builder.Services.AddHttpClient("HealthProbe", client =>
 {
     client.Timeout = TimeSpan.FromSeconds(2); // D61: timeout 2s mỗi service
 });
+builder.Services.AddHttpClient("BackupProbe", client =>
+{
+    client.Timeout = TimeSpan.FromSeconds(30); // D70: timeout 30s cho VACUUM INTO
+});
+builder.Services.AddSingleton(TimeProvider.System);
+builder.Services.AddSingleton<BackupCoordinatorService>();
+builder.Services.AddHostedService<BackupSchedulerBackgroundService>();
 builder.Services.AddServiceHealthChecks(builder.Configuration);
 
 var app = builder.Build();
@@ -229,6 +237,19 @@ app.MapGet("/api/admin/health", async (
     cache.Set<object>(cacheKey, results, TimeSpan.FromSeconds(1)); // Cache 1s (<= 10s D61, HM-04 <= 30s)
     return Results.Ok(results);
 }).RequireAuthorization(AppPermissions.HealthRead);
+
+// D70 / FIN-159: Điều phối sao lưu & xem lịch sử sao lưu toàn hệ thống
+app.MapPost("/api/admin/backups", async (BackupCoordinatorService coordinator) =>
+{
+    var backupId = await coordinator.TriggerBackupAsync();
+    return Results.Accepted($"/api/admin/backups", new { backupId });
+}).RequireAuthorization(AppPermissions.BackupsWrite);
+
+app.MapGet("/api/admin/backups", async (BackupCoordinatorService coordinator, CancellationToken ct) =>
+{
+    var history = await coordinator.GetHistoryAsync(ct);
+    return Results.Ok(history);
+}).RequireAuthorization(AppPermissions.BackupsWrite);
 
 app.MapReverseProxy();
 

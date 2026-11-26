@@ -83,6 +83,20 @@ public class TransactionsController : ControllerBase
             query = query.Where(t => (int)t.Type == queryParams.Type.Value);
         }
 
+        if (!string.IsNullOrWhiteSpace(queryParams.SourceType))
+        {
+            var rawSrc = queryParams.SourceType.Trim();
+            if (Enum.TryParse<SourceType>(rawSrc, true, out var parsedSource))
+            {
+                query = query.Where(t => t.SourceType == parsedSource);
+            }
+            else if (int.TryParse(rawSrc, out var intSource) && Enum.IsDefined(typeof(SourceType), intSource))
+            {
+                var enumSrc = (SourceType)intSource;
+                query = query.Where(t => t.SourceType == enumSrc);
+            }
+        }
+
         if (queryParams.MinAmount.HasValue)
         {
             query = query.Where(t => t.Amount >= queryParams.MinAmount.Value);

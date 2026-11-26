@@ -114,6 +114,31 @@ public class CategoriesController : ControllerBase
         });
     }
 
+    [Authorize(Policy = "SystemOnly")]
+    [HttpGet("/internal/categories")]
+    public async Task<IActionResult> GetInternalCategoriesByUser([FromQuery] Guid userId)
+    {
+        if (userId == Guid.Empty)
+        {
+            return BadRequest(new { message = "userId là bắt buộc." });
+        }
+
+        var categories = await _context.Categories.AsNoTracking()
+            .Where(c => c.IsActive && (c.UserId == null || c.UserId == userId))
+            .Select(c => new
+            {
+                id = c.Id,
+                userId = c.UserId,
+                name = c.Name,
+                type = (int)c.Type,
+                parentId = c.ParentId,
+                isDefault = c.IsDefault
+            })
+            .ToListAsync();
+
+        return Ok(categories);
+    }
+
     [HttpPost]
     public async Task<IActionResult> CreateCategory([FromBody] CreateCategoryRequest request)
     {

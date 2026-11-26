@@ -3,10 +3,12 @@ using System.Text.Json;
 namespace TransactionService.Services;
 
 public record CategoryValidationResult(bool Exists, int? Type, Guid? ParentId = null, string? Name = null);
+public record ImportCategoryInfo(Guid Id, Guid? UserId, string Name, int Type, Guid? ParentId);
 
 public interface ICategoryClient
 {
     Task<CategoryValidationResult> ValidateCategoryAsync(Guid categoryId, string? bearerToken = null, CancellationToken cancellationToken = default);
+    Task<List<ImportCategoryInfo>> GetUserCategoriesAsync(Guid userId, CancellationToken cancellationToken = default) => Task.FromResult(new List<ImportCategoryInfo>());
 }
 
 public class CategoryClient : ICategoryClient
@@ -70,6 +72,30 @@ public class CategoryClient : ICategoryClient
         {
             _logger.LogWarning(ex, "Lỗi gọi CategoryService để xác thực danh mục {CategoryId}", categoryId);
             return new CategoryValidationResult(false, null);
+        }
+    }
+
+    public async Task<List<ImportCategoryInfo>> GetUserCategoriesAsync(Guid userId, CancellationToken cancellationToken = default)
+    {
+        try
+        {
+            var response = await _httpClient.GetAsync($"/internal/categories?userId={userId}", cancellationToken);
+            if (!response.IsSuccessStatusCode)
+            {
+                return new List<ImportCategoryInfo>();
+            }
+
+            var json = await response.Content.ReadAsStringAsync(cancellationToken);
+            var list = JsonSerializer.Deserialize<List<ImportCategoryInfo>>(json, new JsonSerializerOptions
+            {
+                PropertyNameCaseInsensitive = true
+            });
+            return list ?? new List<ImportCategoryInfo>();
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Lỗi lấy danh mục của user {UserId} từ CategoryService", userId);
+            return new List<ImportCategoryInfo>();
         }
     }
 }

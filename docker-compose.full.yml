@@ -1,0 +1,545 @@
+x-service-env: &common-env
+  ASPNETCORE_ENVIRONMENT: ${ASPNETCORE_ENVIRONMENT:-Production}
+  Jwt__SigningKey: ${JWT_SIGNING_KEY:?JWT_SIGNING_KEY is required}
+  JWT_SIGNING_KEY: ${JWT_SIGNING_KEY:?JWT_SIGNING_KEY is required}
+  RabbitMQ__Host: rabbitmq
+  RabbitMQ__Port: "5672"
+  RabbitMQ__Username: ${RABBITMQ_USER:-guest}
+  RabbitMQ__Password: ${RABBITMQ_PASS:-guest}
+  ConnectionStrings__Redis: ${REDIS_CONNECTION:-redis:6379}
+  Redis__Configuration: ${REDIS_CONNECTION:-redis:6379}
+  Consul__Host: ${CONSUL_HOST:-http://consul:8500}
+  Backup__Directory: ${BACKUP_DIRECTORY:-/backups}
+
+services:
+  consul:
+    image: hashicorp/consul:1.15
+    restart: unless-stopped
+    ports:
+      - "8500:8500"
+    command: agent -dev -client=0.0.0.0
+    environment:
+      CONSUL_BIND_INTERFACE: eth0
+    healthcheck:
+      test: ["CMD", "consul", "info"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - smartwallet-net
+
+  rabbitmq:
+    image: rabbitmq:3-management
+    restart: unless-stopped
+    ports:
+      - "5672:5672"
+      - "15672:15672"
+    environment:
+      RABBITMQ_DEFAULT_USER: ${RABBITMQ_USER:-guest}
+      RABBITMQ_DEFAULT_PASS: ${RABBITMQ_PASS:-guest}
+    healthcheck:
+      test: ["CMD", "rabbitmq-diagnostics", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 6
+    networks:
+      - smartwallet-net
+
+  redis:
+    image: redis:alpine
+    restart: unless-stopped
+    ports:
+      - "6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+    networks:
+      - smartwallet-net
+
+  mailhog:
+    image: mailhog/mailhog
+    restart: unless-stopped
+    ports:
+      - "1025:1025"
+      - "8025:8025"
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:8025/api/v2/messages"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - smartwallet-net
+
+  identityservice:
+    build:
+      context: .
+      dockerfile: Dockerfile.service
+      args:
+        PROJECT_PATH: src/Services/IdentityService
+        ASSEMBLY_NAME: IdentityService
+        PORT: 8001
+    ports:
+      - "8001:8001"
+    environment:
+      <<: *common-env
+      ConnectionStrings__DefaultConnection: Data Source=/data/identity.db;Cache=Shared
+      Consul__ServiceHost: identityservice
+      Consul__ServicePort: "8001"
+      Seed__Admin__Email: ${SEED_ADMIN_EMAIL:-admin@smartwallet.local}
+      Seed__Admin__Password: ${SEED_ADMIN_PASSWORD:-}
+      App__FrontendBaseUrl: http://localhost:4200
+    volumes:
+      - identity_data:/data
+      - qlct_backups:/backups
+    depends_on:
+      rabbitmq: { condition: service_healthy }
+      redis: { condition: service_healthy }
+      consul: { condition: service_healthy }
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://127.0.0.1:8001/health/live"]
+      interval: 10s
+      timeout: 3s
+      retries: 10
+      start_period: 15s
+    networks:
+      - smartwallet-net
+
+  userprofileservice:
+    build:
+      context: .
+      dockerfile: Dockerfile.service
+      args:
+        PROJECT_PATH: src/Services/UserProfileService
+        ASSEMBLY_NAME: UserProfileService
+        PORT: 8002
+    ports:
+      - "8002:8002"
+    environment:
+      <<: *common-env
+      ConnectionStrings__DefaultConnection: Data Source=/data/profile.db;Cache=Shared
+      Consul__ServiceHost: userprofileservice
+      Consul__ServicePort: "8002"
+    volumes:
+      - profile_data:/data
+      - qlct_backups:/backups
+    depends_on:
+      rabbitmq: { condition: service_healthy }
+      consul: { condition: service_healthy }
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://127.0.0.1:8002/health/live"]
+      interval: 10s
+      timeout: 3s
+      retries: 10
+      start_period: 15s
+    networks:
+      - smartwallet-net
+
+  walletservice:
+    build:
+      context: .
+      dockerfile: Dockerfile.service
+      args:
+        PROJECT_PATH: src/Services/WalletService
+        ASSEMBLY_NAME: WalletService
+        PORT: 8003
+    ports:
+      - "8003:8003"
+    environment:
+      <<: *common-env
+      ConnectionStrings__DefaultConnection: Data Source=/data/wallet.db;Cache=Shared
+      Consul__ServiceHost: walletservice
+      Consul__ServicePort: "8003"
+      Services__UserProfileService__Url: http://userprofileservice:8002
+      Services__SavingGoalService__Url: http://savinggoalservice:8007
+    volumes:
+      - wallet_data:/data
+      - qlct_backups:/backups
+    depends_on:
+      rabbitmq: { condition: service_healthy }
+      consul: { condition: service_healthy }
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://127.0.0.1:8003/health/live"]
+      interval: 10s
+      timeout: 3s
+      retries: 10
+      start_period: 15s
+    networks:
+      - smartwallet-net
+
+  transactionservice:
+    build:
+      context: .
+      dockerfile: Dockerfile.service
+      args:
+        PROJECT_PATH: src/Services/TransactionService
+        ASSEMBLY_NAME: TransactionService
+        PORT: 8004
+    ports:
+      - "8004:8004"
+    environment:
+      <<: *common-env
+      ConnectionStrings__DefaultConnection: Data Source=/data/transaction.db;Cache=Shared
+      Consul__ServiceHost: transactionservice
+      Consul__ServicePort: "8004"
+      Services__WalletService__Url: http://walletservice:8003
+      Services__CategoryService__Url: http://categoryservice:8005
+      Services__FileService__Url: http://fileservice:8012
+      Import__TempDirectory: /tmp/smartwallet-imports
+    volumes:
+      - transaction_data:/data
+      - qlct_backups:/backups
+    depends_on:
+      rabbitmq: { condition: service_healthy }
+      consul: { condition: service_healthy }
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://127.0.0.1:8004/health/live"]
+      interval: 10s
+      timeout: 3s
+      retries: 10
+      start_period: 15s
+    networks:
+      - smartwallet-net
+
+  categoryservice:
+    build:
+      context: .
+      dockerfile: Dockerfile.service
+      args:
+        PROJECT_PATH: src/Services/CategoryService
+        ASSEMBLY_NAME: CategoryService
+        PORT: 8005
+    ports:
+      - "8005:8005"
+    environment:
+      <<: *common-env
+      ConnectionStrings__DefaultConnection: Data Source=/data/category.db;Cache=Shared
+      Consul__ServiceHost: categoryservice
+      Consul__ServicePort: "8005"
+      Services__TransactionService__Url: http://transactionservice:8004
+    volumes:
+      - category_data:/data
+      - qlct_backups:/backups
+    depends_on:
+      rabbitmq: { condition: service_healthy }
+      consul: { condition: service_healthy }
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://127.0.0.1:8005/health/live"]
+      interval: 10s
+      timeout: 3s
+      retries: 10
+      start_period: 15s
+    networks:
+      - smartwallet-net
+
+  budgetservice:
+    build:
+      context: .
+      dockerfile: Dockerfile.service
+      args:
+        PROJECT_PATH: src/Services/BudgetService
+        ASSEMBLY_NAME: BudgetService
+        PORT: 8006
+    ports:
+      - "8006:8006"
+    environment:
+      <<: *common-env
+      ConnectionStrings__DefaultConnection: Data Source=/data/budget.db;Cache=Shared
+      Consul__ServiceHost: budgetservice
+      Consul__ServicePort: "8006"
+      Services__CategoryService__Url: http://categoryservice:8005
+      Services__TransactionService__Url: http://transactionservice:8004
+    volumes:
+      - budget_data:/data
+      - qlct_backups:/backups
+    depends_on:
+      rabbitmq: { condition: service_healthy }
+      consul: { condition: service_healthy }
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://127.0.0.1:8006/health/live"]
+      interval: 10s
+      timeout: 3s
+      retries: 10
+      start_period: 15s
+    networks:
+      - smartwallet-net
+
+  savinggoalservice:
+    build:
+      context: .
+      dockerfile: Dockerfile.service
+      args:
+        PROJECT_PATH: src/Services/SavingGoalService
+        ASSEMBLY_NAME: SavingGoalService
+        PORT: 8007
+    ports:
+      - "8007:8007"
+    environment:
+      <<: *common-env
+      ConnectionStrings__DefaultConnection: Data Source=/data/saving.db;Cache=Shared
+      Consul__ServiceHost: savinggoalservice
+      Consul__ServicePort: "8007"
+      Services__WalletService__Url: http://walletservice:8003
+    volumes:
+      - saving_data:/data
+      - qlct_backups:/backups
+    depends_on:
+      rabbitmq: { condition: service_healthy }
+      consul: { condition: service_healthy }
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://127.0.0.1:8007/health/live"]
+      interval: 10s
+      timeout: 3s
+      retries: 10
+      start_period: 15s
+    networks:
+      - smartwallet-net
+
+  recurringdebtservice:
+    build:
+      context: .
+      dockerfile: Dockerfile.service
+      args:
+        PROJECT_PATH: src/Services/RecurringDebtService
+        ASSEMBLY_NAME: RecurringDebtService
+        PORT: 8008
+    ports:
+      - "8008:8008"
+    environment:
+      <<: *common-env
+      ConnectionStrings__DefaultConnection: Data Source=/data/recdebt.db;Cache=Shared
+      Consul__ServiceHost: recurringdebtservice
+      Consul__ServicePort: "8008"
+      Services__WalletService__Url: http://walletservice:8003
+      Services__CategoryService__Url: http://categoryservice:8005
+      Scheduler__EnableManualTrigger: ${SCHEDULER_ENABLE_MANUAL_TRIGGER:-false}
+    volumes:
+      - recdebt_data:/data
+      - qlct_backups:/backups
+    depends_on:
+      rabbitmq: { condition: service_healthy }
+      consul: { condition: service_healthy }
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://127.0.0.1:8008/health/live"]
+      interval: 10s
+      timeout: 3s
+      retries: 10
+      start_period: 15s
+    networks:
+      - smartwallet-net
+
+  reportservice:
+    build:
+      context: .
+      dockerfile: Dockerfile.service
+      args:
+        PROJECT_PATH: src/Services/ReportService
+        ASSEMBLY_NAME: ReportService
+        PORT: 8009
+    ports:
+      - "8009:8009"
+    environment:
+      <<: *common-env
+      ConnectionStrings__DefaultConnection: Data Source=/data/report.db;Cache=Shared
+      Consul__ServiceHost: reportservice
+      Consul__ServicePort: "8009"
+      Services__UserProfileService__Url: http://userprofileservice:8002
+      Services__BudgetService__Url: http://budgetservice:8006
+      Services__CategoryService__Url: http://categoryservice:8005
+      Services__WalletService__Url: http://walletservice:8003
+      Services__TransactionService__Url: http://transactionservice:8004
+      Export__StoragePath: /tmp/smartwallet-exports
+    volumes:
+      - report_data:/data
+      - qlct_backups:/backups
+    depends_on:
+      rabbitmq: { condition: service_healthy }
+      redis: { condition: service_healthy }
+      consul: { condition: service_healthy }
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://127.0.0.1:8009/health/live"]
+      interval: 10s
+      timeout: 3s
+      retries: 10
+      start_period: 15s
+    networks:
+      - smartwallet-net
+
+  notificationservice:
+    build:
+      context: .
+      dockerfile: Dockerfile.service
+      args:
+        PROJECT_PATH: src/Services/NotificationService
+        ASSEMBLY_NAME: NotificationService
+        PORT: 8010
+    ports:
+      - "8010:8010"
+    environment:
+      <<: *common-env
+      ConnectionStrings__DefaultConnection: Data Source=/data/notification.db;Cache=Shared
+      Consul__ServiceHost: notificationservice
+      Consul__ServicePort: "8010"
+      Smtp__Host: ${SMTP_HOST:-mailhog}
+      Smtp__Port: ${SMTP_PORT:-1025}
+      Smtp__From: ${SMTP_FROM:-no-reply@smartwallet.local}
+      Smtp__User: ${SMTP_USER:-}
+      Smtp__Password: ${SMTP_PASS:-}
+    volumes:
+      - notification_data:/data
+      - qlct_backups:/backups
+    depends_on:
+      rabbitmq: { condition: service_healthy }
+      mailhog: { condition: service_healthy }
+      consul: { condition: service_healthy }
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://127.0.0.1:8010/health/live"]
+      interval: 10s
+      timeout: 3s
+      retries: 10
+      start_period: 15s
+    networks:
+      - smartwallet-net
+
+  auditservice:
+    build:
+      context: .
+      dockerfile: Dockerfile.service
+      args:
+        PROJECT_PATH: src/Services/AuditService
+        ASSEMBLY_NAME: AuditService
+        PORT: 8011
+    ports:
+      - "8011:8011"
+    environment:
+      <<: *common-env
+      ConnectionStrings__DefaultConnection: Data Source=/data/audit.db;Cache=Shared
+      Consul__ServiceHost: auditservice
+      Consul__ServicePort: "8011"
+    volumes:
+      - audit_data:/data
+      - qlct_backups:/backups
+    depends_on:
+      rabbitmq: { condition: service_healthy }
+      consul: { condition: service_healthy }
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://127.0.0.1:8011/health/live"]
+      interval: 10s
+      timeout: 3s
+      retries: 10
+      start_period: 15s
+    networks:
+      - smartwallet-net
+
+  fileservice:
+    build:
+      context: .
+      dockerfile: Dockerfile.service
+      args:
+        PROJECT_PATH: src/Services/FileService
+        ASSEMBLY_NAME: FileService
+        PORT: 8012
+    ports:
+      - "8012:8012"
+    environment:
+      <<: *common-env
+      ConnectionStrings__DefaultConnection: Data Source=/data/file.db;Cache=Shared
+      Consul__ServiceHost: fileservice
+      Consul__ServicePort: "8012"
+    volumes:
+      - file_data:/data
+      - qlct_backups:/backups
+    depends_on:
+      rabbitmq: { condition: service_healthy }
+      consul: { condition: service_healthy }
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://127.0.0.1:8012/health/live"]
+      interval: 10s
+      timeout: 3s
+      retries: 10
+      start_period: 15s
+    networks:
+      - smartwallet-net
+
+  apigateway:
+    build:
+      context: .
+      dockerfile: Dockerfile.gateway
+    ports:
+      - "8000:8000"
+    environment:
+      <<: *common-env
+      ReverseProxy__Clusters__identity-cluster__Destinations__d1__Address: http://identityservice:8001
+      ReverseProxy__Clusters__profile-cluster__Destinations__d1__Address: http://userprofileservice:8002
+      ReverseProxy__Clusters__wallet-cluster__Destinations__d1__Address: http://walletservice:8003
+      ReverseProxy__Clusters__transaction-cluster__Destinations__d1__Address: http://transactionservice:8004
+      ReverseProxy__Clusters__category-cluster__Destinations__d1__Address: http://categoryservice:8005
+      ReverseProxy__Clusters__budget-cluster__Destinations__d1__Address: http://budgetservice:8006
+      ReverseProxy__Clusters__saving-cluster__Destinations__d1__Address: http://savinggoalservice:8007
+      ReverseProxy__Clusters__recurring-cluster__Destinations__d1__Address: http://recurringdebtservice:8008
+      ReverseProxy__Clusters__debt-cluster__Destinations__d1__Address: http://recurringdebtservice:8008
+      ReverseProxy__Clusters__report-cluster__Destinations__d1__Address: http://reportservice:8009
+      ReverseProxy__Clusters__notification-cluster__Destinations__d1__Address: http://notificationservice:8010
+      ReverseProxy__Clusters__audit-cluster__Destinations__d1__Address: http://auditservice:8011
+      ReverseProxy__Clusters__file-cluster__Destinations__d1__Address: http://fileservice:8012
+    volumes:
+      - qlct_backups:/backups
+    depends_on:
+      redis: { condition: service_healthy }
+      identityservice: { condition: service_healthy }
+      userprofileservice: { condition: service_healthy }
+      walletservice: { condition: service_healthy }
+      transactionservice: { condition: service_healthy }
+      categoryservice: { condition: service_healthy }
+      budgetservice: { condition: service_healthy }
+      savinggoalservice: { condition: service_healthy }
+      recurringdebtservice: { condition: service_healthy }
+      reportservice: { condition: service_healthy }
+      notificationservice: { condition: service_healthy }
+      auditservice: { condition: service_healthy }
+      fileservice: { condition: service_healthy }
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://127.0.0.1:8000/health/live"]
+      interval: 10s
+      timeout: 3s
+      retries: 10
+      start_period: 15s
+    networks:
+      - smartwallet-net
+
+  fe:
+    build:
+      context: .
+      dockerfile: fe/Dockerfile
+    ports:
+      - "4200:4200"
+    depends_on:
+      apigateway: { condition: service_healthy }
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:4200/"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+    networks:
+      - smartwallet-net
+
+networks:
+  smartwallet-net:
+    driver: bridge
+
+volumes:
+  identity_data:
+  profile_data:
+  wallet_data:
+  transaction_data:
+  category_data:
+  budget_data:
+  saving_data:
+  recdebt_data:
+  report_data:
+  notification_data:
+  audit_data:
+  file_data:
+  qlct_backups:
+

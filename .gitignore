@@ -47,6 +47,14 @@ Thumbs.db
 *.log
 
 ## --------------------------------------------------
+## Env & Local Backups / Docker Volumes
+.env
+.env.*
+!.env.example
+backups/
+data/
+tmp_docker_logs/
+
 ## User Uploads & Media (PII)
 ## --------------------------------------------------
 uploads/

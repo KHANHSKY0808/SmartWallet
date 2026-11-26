@@ -17,6 +17,7 @@ public static class AppPermissions
     public const string RatesWrite = "rates.write";
     public const string CategoriesDefaultsWrite = "categories.defaults.write";
     public const string HealthRead = "health.read";
+    public const string BackupsWrite = "backups.write";
 
     public static readonly IReadOnlyList<string> All =
     [
@@ -26,7 +27,8 @@ public static class AppPermissions
         AuditRead,
         RatesWrite,
         CategoriesDefaultsWrite,
-        HealthRead
+        HealthRead,
+        BackupsWrite
     ];
 }
 

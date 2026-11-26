@@ -12,6 +12,8 @@ public class TransactionDbContext : DbContext
     public DbSet<Transaction> Transactions => Set<Transaction>();
     public DbSet<Tag> Tags => Set<Tag>();
     public DbSet<TransactionTag> TransactionTags => Set<TransactionTag>();
+    public DbSet<ImportJob> ImportJobs => Set<ImportJob>();
+    public DbSet<ImportJobError> ImportJobErrors => Set<ImportJobError>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
@@ -97,6 +99,38 @@ public class TransactionDbContext : DbContext
             entity.HasIndex(e => new { e.SourceType, e.SourceId, e.SourceSubId })
                 .IsUnique()
                 .HasFilter("SourceType = 3 AND SourceSubId IS NOT NULL");
+
+            entity.HasIndex(e => new { e.SourceType, e.SourceId, e.SourceSubId })
+                .IsUnique()
+                .HasDatabaseName("UX_Transactions_Import_JobRow")
+                .HasFilter("SourceType = 5 AND SourceId IS NOT NULL AND SourceSubId IS NOT NULL");
+        });
+
+        modelBuilder.Entity<ImportJob>(entity =>
+        {
+            entity.ToTable("ImportJobs");
+            entity.HasKey(e => e.Id);
+            entity.Property(e => e.FileName).IsRequired().HasMaxLength(255);
+            entity.Property(e => e.TempFilePath).HasMaxLength(500);
+            entity.Property(e => e.Extension).HasMaxLength(16);
+            entity.Property(e => e.ErrorMessage).HasMaxLength(500);
+            entity.HasIndex(e => new { e.UserId, e.CreatedAt });
+            entity.HasIndex(e => e.UserId)
+                .IsUnique()
+                .HasDatabaseName("UX_ImportJobs_User_Active")
+                .HasFilter("Status IN (0, 1)");
+        });
+
+        modelBuilder.Entity<ImportJobError>(entity =>
+        {
+            entity.ToTable("ImportJobErrors");
+            entity.HasKey(e => e.Id);
+            entity.Property(e => e.Reason).IsRequired().HasMaxLength(500);
+            entity.HasOne(e => e.ImportJob)
+                .WithMany(j => j.Errors)
+                .HasForeignKey(e => e.ImportJobId)
+                .OnDelete(DeleteBehavior.Cascade);
+            entity.HasIndex(e => new { e.ImportJobId, e.RowNumber }).IsUnique();
         });
     }
 }

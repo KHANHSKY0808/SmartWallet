@@ -59,6 +59,11 @@ export const routes: Routes = [
     loadComponent: () => import('./features/transactions/transaction-list/transaction-list.component').then(m => m.TransactionListComponent)
   },
   {
+    path: 'transactions/import',
+    canActivate: [authGuard],
+    loadComponent: () => import('./features/transactions/transaction-import/transaction-import.component').then(m => m.TransactionImportComponent)
+  },
+  {
     path: 'transactions/create',
     canActivate: [authGuard],
     loadComponent: () => import('./features/transactions/transaction-form/transaction-form.component').then(m => m.TransactionFormComponent)
@@ -117,6 +122,11 @@ export const routes: Routes = [
     path: 'admin/audit',
     canActivate: [permissionGuard(['audit.read'])],
     loadComponent: () => import('./features/admin/admin-audit/admin-audit.component').then(m => m.AdminAuditComponent)
+  },
+  {
+    path: 'admin/backups',
+    canActivate: [permissionGuard(['backups.write'])],
+    loadComponent: () => import('./features/admin/admin-backups/admin-backups.component').then(m => m.AdminBackupsComponent)
   },
   {
     path: '**',

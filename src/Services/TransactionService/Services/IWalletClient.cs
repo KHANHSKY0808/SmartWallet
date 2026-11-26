@@ -3,10 +3,12 @@ using System.Text.Json;
 namespace TransactionService.Services;
 
 public record WalletValidationResult(bool Exists, bool IsArchived, string Currency = "VND");
+public record ImportWalletInfo(Guid Id, string Name, string Currency, bool IsArchived);
 
 public interface IWalletClient
 {
     Task<WalletValidationResult> ValidateWalletAsync(Guid walletId, string? bearerToken = null, CancellationToken cancellationToken = default);
+    Task<List<ImportWalletInfo>> GetUserWalletsAsync(Guid userId, CancellationToken cancellationToken = default) => Task.FromResult(new List<ImportWalletInfo>());
 }
 
 public class WalletClient : IWalletClient
@@ -62,6 +64,30 @@ public class WalletClient : IWalletClient
         {
             _logger.LogWarning(ex, "Lỗi gọi WalletService để xác thực ví {WalletId}", walletId);
             return new WalletValidationResult(false, false);
+        }
+    }
+
+    public async Task<List<ImportWalletInfo>> GetUserWalletsAsync(Guid userId, CancellationToken cancellationToken = default)
+    {
+        try
+        {
+            var response = await _httpClient.GetAsync($"/internal/wallets?userId={userId}", cancellationToken);
+            if (!response.IsSuccessStatusCode)
+            {
+                return new List<ImportWalletInfo>();
+            }
+
+            var json = await response.Content.ReadAsStringAsync(cancellationToken);
+            var list = JsonSerializer.Deserialize<List<ImportWalletInfo>>(json, new JsonSerializerOptions
+            {
+                PropertyNameCaseInsensitive = true
+            });
+            return list ?? new List<ImportWalletInfo>();
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Lỗi lấy danh sách ví của user {UserId} từ WalletService", userId);
+            return new List<ImportWalletInfo>();
         }
     }
 }

@@ -33,6 +33,28 @@ export interface AuditLogItem {
   timestamp: string;
 }
 
+export interface BackupFileManifestItem {
+  service: string;
+  fileName: string;
+  sizeBytes: number;
+  sha256: string;
+}
+
+export interface FailedServiceBackupItem {
+  service: string;
+  error: string;
+}
+
+export interface BackupManifestItem {
+  backupId: string;
+  startedAt: string;
+  completedAt?: string | null;
+  status: 'Running' | 'Completed' | 'PartiallyFailed' | 'Failed';
+  archiveFile?: string | null;
+  files: BackupFileManifestItem[];
+  failedServices: FailedServiceBackupItem[];
+}
+
 export interface PagedResponse<T> {
   items: T[];
   totalItems: number;
@@ -90,6 +112,14 @@ export class AdminService {
     if (params.page) httpParams = httpParams.set('page', params.page);
     if (params.pageSize) httpParams = httpParams.set('pageSize', params.pageSize);
     return this.http.get<PagedResponse<AuditLogItem>>('/api/audit/logs', { params: httpParams });
+  }
+
+  getBackups(): Observable<BackupManifestItem[]> {
+    return this.http.get<BackupManifestItem[]>('/api/admin/backups');
+  }
+
+  triggerBackup(): Observable<{ backupId: string }> {
+    return this.http.post<{ backupId: string }>('/api/admin/backups', {});
   }
 }
 

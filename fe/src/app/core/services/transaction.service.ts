@@ -68,5 +68,41 @@ export class TransactionService {
   createTag(name: string, color?: string): Observable<TagDto> {
     return this.http.post<TagDto>('/api/transactions/tags', { name, color });
   }
+
+  uploadImport(file: File, mapping?: Record<string, string>): Observable<{ jobId: string; status: string }> {
+    const formData = new FormData();
+    formData.append('file', file);
+    if (mapping) {
+      formData.append('mapping', JSON.stringify(mapping));
+    }
+    return this.http.post<{ jobId: string; status: string }>('/api/transactions/imports', formData);
+  }
+
+  getImportStatus(jobId: string): Observable<ImportJobStatusDto> {
+    return this.http.get<ImportJobStatusDto>(`/api/transactions/imports/${jobId}`);
+  }
+
+  downloadImportErrors(jobId: string): Observable<Blob> {
+    return this.http.get(`/api/transactions/imports/${jobId}/errors.csv`, { responseType: 'blob' });
+  }
+}
+
+export interface ImportJobErrorItem {
+  row: number;
+  reason: string;
+}
+
+export interface ImportJobStatusDto {
+  id: string;
+  jobId: string;
+  fileName: string;
+  status: 'Queued' | 'Processing' | 'Completed' | 'Failed';
+  totalRows: number;
+  succeeded: number;
+  failed: number;
+  errorMessage?: string | null;
+  errors: ImportJobErrorItem[];
+  createdAt: string;
+  completedAt?: string | null;
 }
 

@@ -37,6 +37,9 @@
           <a *ngIf="authService.hasPermission('health.read')" routerLink="/admin/health" style="color: #fde047; text-decoration: none; font-weight: 600; font-size: 0.9rem; padding: 0.4rem 0.7rem; border-radius: 4px; display: flex; align-items: center; gap: 0.35rem;">
             <span>🛡️</span> Giám sát
           </a>
+          <a *ngIf="authService.hasPermission('backups.write')" routerLink="/admin/backups" style="color: #fde047; text-decoration: none; font-weight: 600; font-size: 0.9rem; padding: 0.4rem 0.7rem; border-radius: 4px; display: flex; align-items: center; gap: 0.35rem;">
+            <span>💾</span> Sao lưu
+          </a>
           <a routerLink="/profile" style="color: white; text-decoration: none; font-weight: 500; font-size: 0.9rem; padding: 0.4rem 0.8rem; border-radius: 4px; display: flex; align-items: center; gap: 0.4rem;">
             <span>👤</span> Hồ sơ
           </a>

@@ -104,6 +104,30 @@ public class WalletsController : ControllerBase
         });
     }
 
+    [Authorize(Policy = "SystemOnly")]
+    [HttpGet("/internal/wallets")]
+    public async Task<IActionResult> GetInternalWalletsByUser([FromQuery] Guid userId)
+    {
+        if (userId == Guid.Empty)
+        {
+            return BadRequest(new { message = "userId là bắt buộc." });
+        }
+
+        var wallets = await _context.Wallets.AsNoTracking()
+            .Where(w => w.UserId == userId && !w.IsArchived)
+            .Select(w => new
+            {
+                id = w.Id,
+                userId = w.UserId,
+                name = w.Name,
+                currency = w.Currency,
+                isArchived = w.IsArchived
+            })
+            .ToListAsync();
+
+        return Ok(wallets);
+    }
+
     [HttpPost]
     public async Task<IActionResult> CreateWallet([FromBody] CreateWalletRequest request)
     {

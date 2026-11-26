@@ -14,7 +14,8 @@ public enum SourceType
     Manual = 1,
     Recurring = 2,
     Debt = 3,
-    Goal = 4
+    Goal = 4,
+    Import = 5
 }
 
 public class Transaction

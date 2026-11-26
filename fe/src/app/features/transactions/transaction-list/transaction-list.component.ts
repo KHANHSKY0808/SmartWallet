@@ -21,7 +21,10 @@ import { CategoryDto } from '../../../core/models/category.models';
           <h2 style="margin: 0; font-size: 1.5rem; color: #1e293b;">Lịch sử giao dịch</h2>
           <p style="margin: 0.25rem 0 0 0; color: #64748b; font-size: 0.9rem;">Tra cứu, lọc và quản lý các khoản thu chi</p>
         </div>
-        <div>
+        <div style="display: flex; gap: 0.6rem; flex-wrap: wrap;">
+          <a routerLink="/transactions/import" style="padding: 0.6rem 1rem; background: #2563eb; color: white; border-radius: 6px; text-decoration: none; font-weight: 600; display: inline-flex; align-items: center; gap: 0.4rem;">
+            <span>📥</span> Nhập CSV/Excel
+          </a>
           <a routerLink="/transactions/create" style="padding: 0.6rem 1.25rem; background: #16a34a; color: white; border-radius: 6px; text-decoration: none; font-weight: 600; display: inline-flex; align-items: center; gap: 0.4rem;">
             <span>+</span> Ghi giao dịch
           </a>
