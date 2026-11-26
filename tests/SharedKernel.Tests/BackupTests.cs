@@ -194,3 +194,7 @@ public class BackupTests : IDisposable
     }
 }
 
+
+// DK-03 intentional failure gate test
+public class CiRedGateCheck { [Fact] public void Test_DK03_IntentionalFailure_ShouldBlockCI() => Assert.Fail("DK-03: intentional CI gate verification"); }
+
