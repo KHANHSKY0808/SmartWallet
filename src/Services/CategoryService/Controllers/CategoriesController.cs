@@ -313,6 +313,7 @@ public class CategoriesController : ControllerBase
         category.Color = request.Color;
         category.UpdatedAt = DateTime.UtcNow;
 
+        await using var tx = await _context.Database.BeginTransactionAsync();
         await _context.SaveChangesAsync();
 
         if (_eventPublisher != null)
@@ -332,6 +333,8 @@ public class CategoriesController : ControllerBase
                 _logger.LogWarning(ex, "Không thể phát sự kiện CategoryUpdatedEvent cho {CategoryId}", category.Id);
             }
         }
+
+        await tx.CommitAsync();
 
         return Ok(ToDto(category));
     }

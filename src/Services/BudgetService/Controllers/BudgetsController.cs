@@ -221,8 +221,8 @@ public class BudgetsController : ControllerBase
         catch (Exception ex)
         {
             await dbTx.RollbackAsync();
-            _logger.LogError(ex, "Lỗi khi tạo ngân sách hoặc publish cảnh báo, đã rollback DB transaction");
-            return StatusCode(503, new { code = "EVENT_PUBLISH_FAILED", message = "Không thể publish sự kiện lên message broker, tạo ngân sách đã bị rollback." });
+            _logger.LogError(ex, "Lỗi khi tạo ngân sách hoặc ghi Outbox cảnh báo, đã rollback DB transaction");
+            throw;
         }
     }
 
@@ -321,8 +321,8 @@ public class BudgetsController : ControllerBase
         catch (Exception ex)
         {
             await dbTx.RollbackAsync();
-            _logger.LogError(ex, "Lỗi khi cập nhật hạn mức ngân sách hoặc publish cảnh báo, đã rollback DB transaction");
-            return StatusCode(503, new { code = "EVENT_PUBLISH_FAILED", message = "Không thể publish sự kiện lên message broker, thao tác đã được rollback." });
+            _logger.LogError(ex, "Lỗi khi cập nhật hạn mức ngân sách hoặc ghi Outbox cảnh báo, đã rollback DB transaction");
+            throw;
         }
     }
 

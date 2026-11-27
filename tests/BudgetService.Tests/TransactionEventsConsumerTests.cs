@@ -644,5 +644,108 @@ public class TransactionEventsConsumerTests : IDisposable
         Assert.Equal(0m, bo!.CurrentSpent);
         Assert.Equal(400000m, bn!.CurrentSpent);
     }
+
+    [Fact]
+    public async Task OB05_N20_OutOfOrderDeleteBeforeCreate_IgnoresLateCreateViaTombstone()
+    {
+        var categoryId = Guid.NewGuid();
+        var budget = new Budget
+        {
+            UserId = _userId,
+            CategoryId = categoryId,
+            Amount = 2000000m,
+            Month = 11,
+            Year = 2026,
+            CurrentSpent = 0m
+        };
+        _context.Budgets.Add(budget);
+        await _context.SaveChangesAsync();
+
+        var txId = Guid.NewGuid();
+        await _ledgerService.HandleTransactionDeletedAsync(new TransactionDeletedEvent
+        {
+            TransactionId = txId,
+            UserId = _userId,
+            WalletId = Guid.NewGuid(),
+            CategoryId = categoryId,
+            Type = 1,
+            Amount = 500000m
+        });
+
+        Assert.NotNull(await _context.DeletedTransactions.FirstOrDefaultAsync(d => d.TransactionId == txId));
+
+        await _ledgerService.HandleTransactionCreatedAsync(new TransactionCreatedEvent
+        {
+            TransactionId = txId,
+            UserId = _userId,
+            WalletId = Guid.NewGuid(),
+            CategoryId = categoryId,
+            Type = 1,
+            Amount = 500000m,
+            TransactionDate = new DateTime(2026, 11, 15, 10, 0, 0, DateTimeKind.Utc)
+        });
+
+        var refreshed = await _context.Budgets.AsNoTracking().FirstAsync(b => b.Id == budget.Id);
+        Assert.Equal(0m, refreshed.CurrentSpent);
+    }
+
+    [Fact]
+    public async Task OB06_N21_ConcurrentTransactionCreated_FileSqliteWal_NoSqliteBusyOrLostUpdate()
+    {
+        var dbPath = Path.Combine(Path.GetTempPath(), $"qlct-ob06-n21-{Guid.NewGuid():N}.db");
+        try
+        {
+            var connStr = $"Data Source={dbPath};Cache=Shared";
+            var opts = new DbContextOptionsBuilder<BudgetDbContext>().UseSqlite(connStr).Options;
+
+            var categoryId = Guid.NewGuid();
+            await using (var setupDb = new BudgetDbContext(opts))
+            {
+                await setupDb.Database.EnsureCreatedAsync();
+                await setupDb.Database.ExecuteSqlRawAsync("PRAGMA journal_mode=WAL; PRAGMA busy_timeout=5000;");
+                setupDb.Budgets.Add(new Budget
+                {
+                    UserId = _userId,
+                    CategoryId = categoryId,
+                    Amount = 10_000_000m,
+                    Month = 11,
+                    Year = 2026,
+                    CurrentSpent = 0m
+                });
+                await setupDb.SaveChangesAsync();
+            }
+
+            const int n = 20;
+            var tasks = Enumerable.Range(0, n).Select(async i =>
+            {
+                await using var db = new BudgetDbContext(opts);
+                var svc = new BudgetLedgerService(db, NullLogger<BudgetLedgerService>.Instance, new FakeEventPublisher());
+                await svc.HandleTransactionCreatedAsync(new TransactionCreatedEvent
+                {
+                    TransactionId = Guid.NewGuid(),
+                    UserId = _userId,
+                    WalletId = Guid.NewGuid(),
+                    CategoryId = categoryId,
+                    Type = 1,
+                    Amount = 10_000m,
+                    TransactionDate = new DateTime(2026, 11, 10, 12, 0, i, DateTimeKind.Utc)
+                });
+            });
+
+            await Task.WhenAll(tasks);
+
+            await using var verifyDb = new BudgetDbContext(opts);
+            var budget = await verifyDb.Budgets.AsNoTracking().SingleAsync();
+            Assert.Equal(n * 10_000m, budget.CurrentSpent);
+        }
+        finally
+        {
+            SqliteConnection.ClearAllPools();
+            foreach (var suffix in new[] { "", "-wal", "-shm" })
+            {
+                try { if (File.Exists(dbPath + suffix)) File.Delete(dbPath + suffix); } catch { }
+            }
+        }
+    }
 }
 

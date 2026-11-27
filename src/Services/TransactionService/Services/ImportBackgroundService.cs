@@ -243,10 +243,20 @@ public class ImportBackgroundService : BackgroundService
         catch (Exception ex) when (!cancellationToken.IsCancellationRequested)
         {
             _logger.LogError(ex, "ImportJob {JobId} thất bại.", jobId);
-            job.Status = ImportJobStatus.Failed;
-            job.ErrorMessage = Truncate(ex.Message, 500);
-            job.CompletedAt = DateTime.UtcNow;
-            await db.SaveChangesAsync(CancellationToken.None);
+            db.ChangeTracker.Clear();
+            var freshJob = await db.ImportJobs.FirstOrDefaultAsync(j => j.Id == jobId, CancellationToken.None);
+            if (freshJob != null)
+            {
+                // N49 / OB-09: Sau rollback batch, Succeeded/Failed phải phản ánh đúng số bản ghi thực tế đã commit
+                freshJob.Succeeded = await db.Transactions.CountAsync(
+                    t => t.SourceType == SourceType.Import && t.SourceId == jobId, CancellationToken.None);
+                freshJob.Failed = await db.ImportJobErrors.CountAsync(
+                    e => e.ImportJobId == jobId, CancellationToken.None);
+                freshJob.Status = ImportJobStatus.Failed;
+                freshJob.ErrorMessage = Truncate(ex.Message, 500);
+                freshJob.CompletedAt = DateTime.UtcNow;
+                await db.SaveChangesAsync(CancellationToken.None);
+            }
             DeleteTempFileQuietly(job.TempFilePath);
         }
     }

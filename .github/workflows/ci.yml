@@ -83,10 +83,19 @@ jobs:
           cache: npm
           cache-dependency-path: fe/package-lock.json
 
-      - name: Frontend Install, Vitest & Production Build
-        working-directory: fe
+      - name: Frontend Install, OpenAPI Contract Check (D74), Vitest & Production Build
+        env:
+          JWT_SIGNING_KEY: ${{ secrets.JWT_SIGNING_KEY || 'CI-TEST-ONLY-signing-key-must-be-at-least-32-chars' }}
         run: |
+          node tools/export-openapi.mjs --configuration Release
+          cd fe
           npm install --no-audit --no-fund
+          npm run api:gen
+          cd ..
+          git diff --exit-code fe/src/app/core/api
+          cd fe
+          npx tsc --noEmit -p tsconfig.app.json
+          npx tsc --noEmit -p tsconfig.spec.json
           npx ng test --watch=false
           npm run build
 

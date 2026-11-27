@@ -279,7 +279,7 @@ public class SavingsControllerTests : IDisposable
     }
 
     [Fact]
-    public async Task Withdraw_PublisherFailure_RollbacksAndReturns503_GT13()
+    public async Task Withdraw_WithOutbox_SavesGoalLogAndOutboxMessageWhenBrokerDown_OB()
     {
         var walletId = Guid.NewGuid();
         _walletServiceClient.Wallets[walletId] = new WalletInfo
@@ -294,7 +294,7 @@ public class SavingsControllerTests : IDisposable
         {
             Id = Guid.NewGuid(),
             UserId = _userA,
-            Name = "Mục tiêu rút lỗi",
+            Name = "Mục tiêu rút Outbox",
             TargetAmount = 10_000_000m,
             CurrentAmount = 3_000_000m,
             TargetDate = DateTime.UtcNow.AddDays(30),
@@ -303,21 +303,26 @@ public class SavingsControllerTests : IDisposable
         await _context.SavingGoals.AddAsync(goal);
         await _context.SaveChangesAsync();
 
-        _publisher.ShouldThrow = true;
+        var outboxPublisher = new OutboxEventPublisher<SavingGoalDbContext>(_context);
+        var outboxCtrl = new SavingsController(_context, outboxPublisher, NullLogger<SavingsController>.Instance, _walletServiceClient);
+        outboxCtrl.ControllerContext = _controller.ControllerContext;
 
         var key = Guid.NewGuid().ToString();
-        var result = await _controller.Withdraw(goal.Id, key, new WithdrawRequest
+        var result = await outboxCtrl.Withdraw(goal.Id, key, new WithdrawRequest
         {
             WalletId = walletId,
             Amount = 1_000_000m
-        }) as ObjectResult;
+        }) as OkObjectResult;
 
         Assert.NotNull(result);
-        Assert.Equal(503, result.StatusCode);
+        Assert.Equal(200, result.StatusCode);
 
-        // Verify goal amount is NOT changed (rollback)
         var refreshedGoal = await _context.SavingGoals.AsNoTracking().FirstAsync(g => g.Id == goal.Id);
-        Assert.Equal(3_000_000m, refreshedGoal.CurrentAmount);
+        Assert.Equal(2_000_000m, refreshedGoal.CurrentAmount);
+
+        var outbox = await _context.OutboxMessages.SingleAsync();
+        Assert.Equal("goal.funds_withdrawn", outbox.RoutingKey);
+        Assert.Null(outbox.SentAt);
     }
 
     [Fact]

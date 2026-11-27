@@ -7,6 +7,8 @@ using NotificationService.Services;
 
 var builder = WebApplication.CreateBuilder(args);
 
+builder.AddSmartWalletLogging("NotificationService");
+
 // Cấu hình Controllers
 builder.Services.AddControllers();
 builder.Services.AddEndpointsApiExplorer();
@@ -88,11 +90,9 @@ using (var scope = app.Services.CreateScope())
     catch { }
 }
 
-if (app.Environment.IsDevelopment())
-{
-    app.UseSwagger();
-    app.UseSwaggerUI();
-}
+app.UseSmartWalletOpenApi();
+
+app.UseSmartWalletRequestLogging();
 
 app.UseAuthentication();
 app.UseAuthorization();

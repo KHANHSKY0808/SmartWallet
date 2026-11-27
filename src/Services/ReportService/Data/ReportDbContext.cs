@@ -1,9 +1,10 @@
 using Microsoft.EntityFrameworkCore;
 using ReportService.Models;
+using SharedKernel.Messaging;
 
 namespace ReportService.Data;
 
-public class ReportDbContext : DbContext
+public class ReportDbContext : DbContext, IOutboxDbContext
 {
     public ReportDbContext(DbContextOptions<ReportDbContext> options) : base(options)
     {
@@ -13,6 +14,7 @@ public class ReportDbContext : DbContext
     public DbSet<ReportCategoryCache> ReportCategories => Set<ReportCategoryCache>();
     public DbSet<ExportJob> ExportJobs => Set<ExportJob>();
     public DbSet<ProcessedEvent> ProcessedEvents => Set<ProcessedEvent>();
+    public DbSet<OutboxMessage> OutboxMessages => Set<OutboxMessage>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
@@ -54,6 +56,8 @@ public class ReportDbContext : DbContext
             entity.ToTable("ProcessedEvents");
             entity.HasKey(e => e.EventId);
         });
+
+        modelBuilder.ConfigureOutboxMessages();
     }
 }
 

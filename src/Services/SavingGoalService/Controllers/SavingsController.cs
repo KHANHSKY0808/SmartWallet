@@ -387,7 +387,7 @@ public class SavingsController : ControllerBase
         {
             await tx.RollbackAsync();
             _logger.LogError(ex, "Lỗi khi rút tiền mục tiêu {GoalId}", goalId);
-            return StatusCode(503, new { code = "EVENT_PUBLISH_FAILED", message = "Không thể hoàn tất giao dịch rút tiền. Vui lòng thử lại." });
+            throw;
         }
     }
 

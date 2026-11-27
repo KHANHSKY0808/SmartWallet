@@ -3,12 +3,14 @@ import { inject } from '@angular/core';
 import { Router } from '@angular/router';
 import { BehaviorSubject, catchError, filter, switchMap, take, throwError } from 'rxjs';
 import { AuthService } from '../services/auth.service';
+import { RateLimitNoticeService } from '../services/rate-limit-notice.service';
 
 let isRefreshing = false;
 const refreshTokenSubject = new BehaviorSubject<string | null>(null);
 
 export const authInterceptor: HttpInterceptorFn = (req, next) => {
   const authService = inject(AuthService);
+  const rateLimitNotice = inject(RateLimitNoticeService);
   const router = inject(Router);
   const token = authService.getAccessToken();
 
@@ -72,6 +74,18 @@ export const authInterceptor: HttpInterceptorFn = (req, next) => {
             })
           );
         }
+      }
+
+      if (error.status === 429) {
+        const headerVal = error.headers?.get('Retry-After');
+        const bodyVal = typeof error.error === 'object' && error.error !== null
+          ? Number((error.error as { retryAfterSeconds?: unknown }).retryAfterSeconds)
+          : NaN;
+        const parsedHeader = headerVal ? Number.parseInt(headerVal, 10) : NaN;
+        const seconds = Number.isFinite(parsedHeader) && parsedHeader > 0
+          ? parsedHeader
+          : (Number.isFinite(bodyVal) && bodyVal > 0 ? bodyVal : 60);
+        rateLimitNotice.show(seconds);
       }
 
       if (error.status === 401 && !isAuthUrl) {

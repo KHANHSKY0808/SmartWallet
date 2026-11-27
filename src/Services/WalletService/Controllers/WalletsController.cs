@@ -462,7 +462,8 @@ public class WalletsController : ControllerBase
             return StatusCode(500, new { message = "Giao dịch chuyển tiền thất bại, đã hoàn tiền lại ví nguồn." });
         }
 
-        // SAGA BƯỚC 3: Lưu bản ghi WalletTransfers và IdempotencyRecord
+        // SAGA BƯỚC 3: Lưu bản ghi WalletTransfers, IdempotencyRecord và Outbox atomically
+        await using var tx = await _context.Database.BeginTransactionAsync();
         var transfer = new WalletTransfer
         {
             UserId = userId,
@@ -517,14 +518,36 @@ public class WalletsController : ControllerBase
         try
         {
             await _context.SaveChangesAsync();
+
+            // SAGA BƯỚC 4: Ghi sự kiện MoneyTransferred vào Outbox cùng transaction
+            if (_eventPublisher != null)
+            {
+                var moneyEvent = new MoneyTransferredEvent
+                {
+                    TransferId = transfer.Id,
+                    UserId = userId,
+                    SourceWalletId = fromWallet.Id,
+                    TargetWalletId = toWallet.Id,
+                    FromWalletId = fromWallet.Id,
+                    ToWalletId = toWallet.Id,
+                    Amount = request.Amount,
+                    Fee = request.Fee,
+                    Note = request.Note
+                };
+                await _eventPublisher.PublishAsync(moneyEvent, "wallet.transferred");
+            }
+
+            await tx.CommitAsync();
         }
         catch (DbUpdateConcurrencyException)
         {
+            await tx.RollbackAsync();
             // D22 / T-19: Xung đột RowVersion trả 409 CONCURRENCY_CONFLICT
             return StatusCode(409, new { code = "CONCURRENCY_CONFLICT", message = "Xung đột đồng thời khi cập nhật số dư ví, vui lòng thử lại." });
         }
         catch (DbUpdateException)
         {
+            await tx.RollbackAsync();
             // N4 / T-03b: Xung đột đồng thời do trùng IdempotencyKey (Double submit)
             _context.ChangeTracker.Clear();
             for (var retry = 0; retry < 5; retry++)
@@ -544,32 +567,6 @@ public class WalletsController : ControllerBase
             }
 
             return StatusCode(409, new { code = "CONCURRENCY_CONFLICT", message = "Xung đột đồng thời khi xử lý giao dịch, vui lòng thử lại." });
-        }
-
-        // SAGA BƯỚC 4: Publish sự kiện MoneyTransferred lên RabbitMQ
-        if (_eventPublisher != null)
-        {
-            try
-            {
-                var moneyEvent = new MoneyTransferredEvent
-                {
-                    TransferId = transfer.Id,
-                    UserId = userId,
-                    SourceWalletId = fromWallet.Id,
-                    TargetWalletId = toWallet.Id,
-                    FromWalletId = fromWallet.Id,
-                    ToWalletId = toWallet.Id,
-                    Amount = request.Amount,
-                    Fee = request.Fee,
-                    Note = request.Note
-                };
-                await _eventPublisher.PublishAsync(moneyEvent, "wallet.transferred");
-            }
-            catch (Exception ex)
-            {
-                // T-18: Chọn cách (a): log warning/error và giữ transfer thành công
-                _logger.LogError(ex, "Lỗi khi publish MoneyTransferredEvent cho TransferId {TransferId}", transfer.Id);
-            }
         }
 
         return Ok(responseDto);
@@ -756,7 +753,7 @@ public class WalletsController : ControllerBase
         {
             await tx.RollbackAsync();
             _logger.LogError(ex, "Lỗi khi nạp tiền mục tiêu {GoalId} từ ví {WalletId}", request.GoalId, walletId);
-            return StatusCode(503, new { code = "EVENT_PUBLISH_FAILED", message = "Không thể hoàn tất giao dịch nạp tiền. Vui lòng thử lại." });
+            throw;
         }
     }
 

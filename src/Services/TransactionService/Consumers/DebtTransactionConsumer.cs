@@ -69,6 +69,7 @@ public class DebtTransactionConsumer : BaseRabbitMqConsumer<DebtTransactionReque
             UpdatedAt = DateTime.UtcNow
         };
 
+        await using var dbTx = await context.Database.BeginTransactionAsync(cancellationToken);
         context.Transactions.Add(tx);
         try
         {
@@ -76,13 +77,14 @@ public class DebtTransactionConsumer : BaseRabbitMqConsumer<DebtTransactionReque
         }
         catch (DbUpdateException)
         {
+            await dbTx.RollbackAsync(cancellationToken);
             _logger.LogInformation("Bỏ qua giao dịch sổ nợ bị trùng đồng thời (unique index): Debt {DebtId}, SubId {SubId}", @event.DebtId, subId);
             return;
         }
 
         _logger.LogInformation("Đã tạo giao dịch sổ nợ {TxId} cho Debt {DebtId}", tx.Id, @event.DebtId);
 
-        // 2. Publish sự kiện TransactionCreatedEvent để cập nhật số dư ví và read model ReportService (D58)
+        // 2. Ghi Outbox sự kiện TransactionCreatedEvent trong cùng DB transaction (D72)
         if (eventPublisher != null)
         {
             var walletClient = scope.ServiceProvider.GetService<IWalletClient>();
@@ -122,6 +124,8 @@ public class DebtTransactionConsumer : BaseRabbitMqConsumer<DebtTransactionReque
                 Note = tx.Note
             }, "transaction.created", cancellationToken);
         }
+
+        await dbTx.CommitAsync(cancellationToken);
     }
 }
 

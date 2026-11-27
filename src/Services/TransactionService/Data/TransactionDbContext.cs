@@ -1,9 +1,10 @@
 using Microsoft.EntityFrameworkCore;
+using SharedKernel.Messaging;
 using TransactionService.Models;
 
 namespace TransactionService.Data;
 
-public class TransactionDbContext : DbContext
+public class TransactionDbContext : DbContext, IOutboxDbContext
 {
     public TransactionDbContext(DbContextOptions<TransactionDbContext> options) : base(options)
     {
@@ -14,6 +15,7 @@ public class TransactionDbContext : DbContext
     public DbSet<TransactionTag> TransactionTags => Set<TransactionTag>();
     public DbSet<ImportJob> ImportJobs => Set<ImportJob>();
     public DbSet<ImportJobError> ImportJobErrors => Set<ImportJobError>();
+    public DbSet<OutboxMessage> OutboxMessages => Set<OutboxMessage>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
@@ -132,6 +134,8 @@ public class TransactionDbContext : DbContext
                 .OnDelete(DeleteBehavior.Cascade);
             entity.HasIndex(e => new { e.ImportJobId, e.RowNumber }).IsUnique();
         });
+
+        modelBuilder.ConfigureOutboxMessages();
     }
 }
 

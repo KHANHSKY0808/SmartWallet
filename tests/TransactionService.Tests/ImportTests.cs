@@ -266,6 +266,76 @@ public class ImportTests : IDisposable
         Assert.Equal("Import", paged.Items[0].SourceType);
     }
 
+    [Fact]
+    public async Task OB09_N49_ImportBatchFailure_RollsBackChunkAndOutbox_PreservesCommittedChunks()
+    {
+        var filePath = Path.Combine(_tempDir, "n49_120.csv");
+        var sb = new StringBuilder("Ngay,SoTien,Loai,DanhMuc,Vi,GhiChu\r\n");
+        for (int i = 1; i <= 120; i++)
+        {
+            sb.AppendLine($"16/11/2026,1000,Chi,Ăn uống,Ví chính,n49 row {i}");
+        }
+        await File.WriteAllBytesAsync(filePath, Encoding.UTF8.GetBytes(sb.ToString()));
+
+        var jobId = Guid.NewGuid();
+        await using (var db = CreateDbContext())
+        {
+            db.ImportJobs.Add(new ImportJob
+            {
+                Id = jobId,
+                UserId = _userId,
+                FileName = "n49_120.csv",
+                TempFilePath = filePath,
+                Extension = ".csv",
+                TotalRows = 120,
+                Status = ImportJobStatus.Queued
+            });
+            await db.SaveChangesAsync();
+        }
+
+        // First 100 events (chunk 1) write into Outbox atomically; 105th event throws mid-chunk 2 -> rolls back chunk 2 + its outbox rows!
+        var services = new ServiceCollection();
+        services.AddDbContext<TransactionDbContext>(o => o.UseSqlite(_connection));
+        services.AddSingleton<IWalletClient>(new FakeImportWalletClient(_walletId));
+        services.AddSingleton<ICategoryClient>(new FakeImportCategoryClient(_expCatId, _incCatId));
+        services.AddSingleton<IEventPublisher>(sp => new FailAfterNOutboxPublisher(sp.GetRequiredService<TransactionDbContext>(), 104));
+        await using var provider = services.BuildServiceProvider();
+
+        var worker = new ImportBackgroundService(provider, new ImportJobQueue(), NullLogger<ImportBackgroundService>.Instance);
+        await worker.ProcessJobAsync(jobId);
+
+        await using var checkDb = CreateDbContext();
+        var job = await checkDb.ImportJobs.AsNoTracking().SingleAsync(j => j.Id == jobId);
+        Assert.Equal(ImportJobStatus.Failed, job.Status);
+        Assert.Equal(100, job.Succeeded);
+        Assert.Equal(100, await checkDb.Transactions.CountAsync(t => t.SourceType == SourceType.Import && t.SourceId == jobId));
+        Assert.Equal(100, await checkDb.OutboxMessages.CountAsync());
+    }
+
+    private sealed class FailAfterNOutboxPublisher : IEventPublisher
+    {
+        private readonly OutboxEventPublisher<TransactionDbContext> _inner;
+        private readonly int _failOnCall;
+        private int _calls;
+
+        public FailAfterNOutboxPublisher(TransactionDbContext db, int failOnCall)
+        {
+            _inner = new OutboxEventPublisher<TransactionDbContext>(db);
+            _failOnCall = failOnCall;
+        }
+
+        public async Task PublishAsync<TEvent>(TEvent @event, string routingKey, CancellationToken cancellationToken = default)
+            where TEvent : IntegrationEvent
+        {
+            _calls++;
+            if (_calls >= _failOnCall)
+            {
+                throw new InvalidOperationException("Simulated mid-batch Outbox error (OB-09 / N49)");
+            }
+            await _inner.PublishAsync(@event, routingKey, cancellationToken);
+        }
+    }
+
     private static void SetUser(ControllerBase controller, Guid uid)
     {
         controller.ControllerContext = new ControllerContext

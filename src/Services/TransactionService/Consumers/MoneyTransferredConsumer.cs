@@ -61,6 +61,7 @@ public class MoneyTransferredConsumer : BaseRabbitMqConsumer<MoneyTransferredEve
             UpdatedAt = DateTime.UtcNow
         };
 
+        await using var dbTx = await context.Database.BeginTransactionAsync(cancellationToken);
         context.Transactions.Add(tx);
         await context.SaveChangesAsync(cancellationToken);
 
@@ -91,5 +92,6 @@ public class MoneyTransferredConsumer : BaseRabbitMqConsumer<MoneyTransferredEve
                 Note = tx.Note
             }, "transaction.created", cancellationToken);
         }
+        await dbTx.CommitAsync(cancellationToken);
     }
 }

@@ -64,6 +64,10 @@ public sealed class SystemTokenDelegatingHandler : DelegatingHandler
             var token = ServiceTokenFactory.CreateSystemToken(_configuration, _serviceName);
             request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", token);
         }
+        if (!request.Headers.Contains("X-Correlation-ID") && !string.IsNullOrWhiteSpace(CorrelationContext.CurrentCorrelationId))
+        {
+            request.Headers.TryAddWithoutValidation("X-Correlation-ID", CorrelationContext.CurrentCorrelationId);
+        }
         return base.SendAsync(request, cancellationToken);
     }
 }

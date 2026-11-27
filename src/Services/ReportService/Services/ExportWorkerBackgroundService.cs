@@ -133,6 +133,7 @@ public class ExportWorkerBackgroundService : BackgroundService
                 job.Status = ExportJobStatus.Completed;
                 job.CompletedAt = nowUtc;
                 job.ExpiresAt = nowUtc.AddDays(7);
+                await using var tx = await db.Database.BeginTransactionAsync(cancellationToken);
                 await db.SaveChangesAsync(cancellationToken);
 
                 if (publisher != null)
@@ -144,6 +145,8 @@ public class ExportWorkerBackgroundService : BackgroundService
                         Format = ext
                     }, "report.export_completed", cancellationToken);
                 }
+
+                await tx.CommitAsync(cancellationToken);
             }
             catch (Exception ex)
             {

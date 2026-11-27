@@ -216,8 +216,26 @@ public class ReportSyncAndBackfillTests : IDisposable
             var userId = Guid.NewGuid();
             var walletId = Guid.NewGuid();
             var catId = Guid.NewGuid();
-            const int eventCount = 600;
 
+            // N55: Warmup JIT & EF model compilation trước khi đo tốc độ thật
+            for (var w = 0; w < 5; w++)
+            {
+                await consumer.HandleEventAsync(new TransactionCreatedEvent
+                {
+                    TransactionId = Guid.NewGuid(),
+                    UserId = userId,
+                    WalletId = walletId,
+                    CategoryId = catId,
+                    CategoryName = "Ăn uống",
+                    Type = 1,
+                    Amount = 5_000m,
+                    Currency = "VND",
+                    TransactionDate = new DateTime(2026, 11, 20, 0, 0, 0, DateTimeKind.Utc),
+                    OccurredAt = DateTime.UtcNow
+                });
+            }
+
+            const int eventCount = 600;
             var sw = System.Diagnostics.Stopwatch.StartNew();
             for (var i = 0; i < eventCount; i++)
             {

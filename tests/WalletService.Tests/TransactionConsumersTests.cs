@@ -307,4 +307,32 @@ public class TransactionConsumersTests : IDisposable
         Assert.NotNull(wallet);
         Assert.Equal(1_000_000m, wallet.Balance); // Quay lại 1M
     }
+
+    [Fact]
+    public async Task OB07_B5A1_GoalDepositRejected_RefundsWalletIdempotently()
+    {
+        var config = new ConfigurationBuilder().Build();
+        var refundConsumer = new GoalDepositRejectedConsumer(config, NullLogger<GoalDepositRejectedConsumer>.Instance, _serviceProvider);
+
+        var evt = new GoalDepositRejectedEvent
+        {
+            OriginalEventId = Guid.NewGuid(),
+            GoalId = Guid.NewGuid(),
+            WalletId = _walletAId,
+            UserId = _userId,
+            Amount = 250_000m,
+            Reason = "GOAL_NOT_FOUND_OR_INACTIVE"
+        };
+
+        await refundConsumer.HandleEventAsync(evt);
+        await refundConsumer.HandleEventAsync(evt); // Duplicate delivery must stay idempotent
+
+        var wallet = await _context.Wallets.AsNoTracking().FirstAsync(w => w.Id == _walletAId);
+        Assert.Equal(1_250_000m, wallet.Balance);
+
+        var refunds = await _context.WalletBalanceHistory
+            .Where(h => h.Reason == BalanceChangeReason.GoalDepositRefund && h.SourceEventId == evt.OriginalEventId)
+            .ToListAsync();
+        Assert.Single(refunds);
+    }
 }

@@ -6,6 +6,8 @@ using FileService.Services;
 
 var builder = WebApplication.CreateBuilder(args);
 
+builder.AddSmartWalletLogging("FileService");
+
 // Cấu hình Database
 builder.Services.AddDbContext<FileDbContext>(options =>
 {
@@ -48,11 +50,9 @@ using (var scope = app.Services.CreateScope())
     db.Database.Migrate();
 }
 
-if (app.Environment.IsDevelopment())
-{
-    app.UseSwagger();
-    app.UseSwaggerUI();
-}
+app.UseSmartWalletOpenApi();
+
+app.UseSmartWalletRequestLogging();
 
 app.UseAuthentication();
 app.UseAuthorization();

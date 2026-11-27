@@ -1,9 +1,17 @@
 using Microsoft.EntityFrameworkCore;
 using BudgetService.Models;
+using SharedKernel.Messaging;
 
 namespace BudgetService.Data;
 
-public class BudgetDbContext : DbContext
+/// <summary>N20: Tombstone lưu TransactionDeletedEvent đến trước TransactionCreatedEvent để tránh tính nhầm giao dịch đã xóa.</summary>
+public class DeletedTransactionTombstone
+{
+    public Guid TransactionId { get; set; }
+    public DateTime DeletedAt { get; set; } = DateTime.UtcNow;
+}
+
+public class BudgetDbContext : DbContext, IOutboxDbContext
 {
     public BudgetDbContext(DbContextOptions<BudgetDbContext> options) : base(options)
     {
@@ -11,6 +19,8 @@ public class BudgetDbContext : DbContext
 
     public DbSet<Budget> Budgets => Set<Budget>();
     public DbSet<BudgetTransaction> BudgetTransactions => Set<BudgetTransaction>();
+    public DbSet<DeletedTransactionTombstone> DeletedTransactions => Set<DeletedTransactionTombstone>();
+    public DbSet<OutboxMessage> OutboxMessages => Set<OutboxMessage>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
@@ -48,6 +58,15 @@ public class BudgetDbContext : DbContext
                 .HasForeignKey(e => e.BudgetId)
                 .OnDelete(DeleteBehavior.Cascade);
         });
+
+        modelBuilder.Entity<DeletedTransactionTombstone>(entity =>
+        {
+            entity.ToTable("DeletedTransactions");
+            entity.HasKey(e => e.TransactionId);
+            entity.Property(e => e.TransactionId).ValueGeneratedNever();
+        });
+
+        modelBuilder.ConfigureOutboxMessages();
     }
 }
 

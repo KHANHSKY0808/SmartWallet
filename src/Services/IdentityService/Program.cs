@@ -7,6 +7,8 @@ using StackExchange.Redis;
 
 var builder = WebApplication.CreateBuilder(args);
 
+builder.AddSmartWalletLogging("IdentityService");
+
 // Cấu hình Controllers
 builder.Services.AddControllers();
 builder.Services.AddEndpointsApiExplorer();
@@ -40,7 +42,7 @@ builder.Services.AddSingleton(TimeProvider.System);
 // Đăng ký Services nghiệp vụ Identity (D62: bỏ LoggingEmailSender & Channel, phát EmailRequestedEvent qua RabbitMQ)
 builder.Services.AddScoped<IPasswordHasher, PasswordHasher>();
 builder.Services.AddScoped<ITokenService, TokenService>();
-builder.Services.AddSingleton<IEventPublisher, RabbitMqEventPublisher>();
+builder.Services.AddSmartWalletOutbox<IdentityDbContext>();
 
 // Cấu hình JWT Bearer & RBAC chung từ SharedKernel
 builder.Services.AddJwtAuthentication(builder.Configuration);
@@ -61,11 +63,9 @@ using (var scope = app.Services.CreateScope())
     await DbInitializer.InitializeAsync(context, app.Logger, builder.Configuration, hasher);
 }
 
-if (app.Environment.IsDevelopment())
-{
-    app.UseSwagger();
-    app.UseSwaggerUI();
-}
+app.UseSmartWalletOpenApi();
+
+app.UseSmartWalletRequestLogging();
 
 app.UseAuthentication();
 app.UseAuthorization();

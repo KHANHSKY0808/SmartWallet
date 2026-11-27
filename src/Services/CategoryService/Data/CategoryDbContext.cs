@@ -1,15 +1,17 @@
 using Microsoft.EntityFrameworkCore;
 using CategoryService.Models;
+using SharedKernel.Messaging;
 
 namespace CategoryService.Data;
 
-public class CategoryDbContext : DbContext
+public class CategoryDbContext : DbContext, IOutboxDbContext
 {
     public CategoryDbContext(DbContextOptions<CategoryDbContext> options) : base(options)
     {
     }
 
     public DbSet<Category> Categories => Set<Category>();
+    public DbSet<OutboxMessage> OutboxMessages => Set<OutboxMessage>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
@@ -29,6 +31,8 @@ public class CategoryDbContext : DbContext
 
             entity.HasIndex(c => new { c.UserId, c.IsActive, c.Type });
         });
+
+        modelBuilder.ConfigureOutboxMessages();
     }
 }
 

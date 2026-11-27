@@ -43,16 +43,41 @@ public class GoalFundsDepositedConsumer : BaseRabbitMqConsumer<GoalFundsDeposite
         }
 
         var goal = await context.SavingGoals.FirstOrDefaultAsync(g => g.Id == @event.GoalId, cancellationToken);
-        if (goal == null)
+        if (goal == null || goal.Status == 3)
         {
-            _logger.LogError("Không tìm thấy mục tiêu {GoalId} để cộng tiền nạp. Nack/DLQ.", @event.GoalId);
-            throw new InvalidOperationException($"Không tìm thấy mục tiêu {@event.GoalId} để cộng tiền nạp.");
-        }
+            var reason = goal == null ? "GOAL_NOT_FOUND" : "GOAL_CANCELLED";
+            _logger.LogWarning("B5A-1: Mục tiêu {GoalId} không hợp lệ ({Reason}). Ghi Outbox GoalDepositRejectedEvent để hoàn tiền ví {WalletId}.",
+                @event.GoalId, reason, @event.WalletId);
 
-        if (goal.Status == 3)
-        {
-            _logger.LogError("Mục tiêu {GoalId} đã bị hủy, không thể nhận tiền nạp. Nack/DLQ.", @event.GoalId);
-            throw new InvalidOperationException($"Mục tiêu {@event.GoalId} đã bị hủy, không thể nhận tiền nạp.");
+            await using var rejectTx = await context.Database.BeginTransactionAsync(cancellationToken);
+            try
+            {
+                await context.ProcessedEvents.AddAsync(new ProcessedEvent
+                {
+                    EventId = @event.Id,
+                    ProcessedAt = DateTime.UtcNow
+                }, cancellationToken);
+                await context.SaveChangesAsync(cancellationToken);
+
+                await publisher.PublishAsync(new GoalDepositRejectedEvent
+                {
+                    Id = Guid.NewGuid(),
+                    GoalId = @event.GoalId,
+                    WalletId = @event.WalletId,
+                    UserId = @event.UserId,
+                    Amount = @event.Amount,
+                    OriginalEventId = @event.Id,
+                    Reason = reason
+                }, "goal.deposit_rejected", cancellationToken);
+
+                await rejectTx.CommitAsync(cancellationToken);
+                return;
+            }
+            catch
+            {
+                await rejectTx.RollbackAsync(cancellationToken);
+                throw;
+            }
         }
 
         goal.CurrentAmount += @event.Amount;

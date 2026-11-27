@@ -510,13 +510,13 @@ public class WalletsControllerTests : IDisposable
     }
 
     [Fact]
-    public async Task Deposit_PublisherFailure_RollbacksAndReturns503_GT13()
+    public async Task Deposit_WithOutbox_CommitsWalletAndOutboxAtomically_OB()
     {
         var wallet = new Wallet
         {
             Id = Guid.NewGuid(),
             UserId = _userA,
-            Name = "Ví tiết kiệm",
+            Name = "Ví tiết kiệm Outbox",
             Currency = "VND",
             Balance = 1_000_000m,
             Type = WalletType.Cash,
@@ -535,21 +535,30 @@ public class WalletsControllerTests : IDisposable
             StatusCode = 1
         };
 
-        _publisher.ShouldThrow = true;
+        var outboxCtrl = new WalletsController(
+            _context,
+            _ledger,
+            _profileClient,
+            NullLogger<WalletsController>.Instance,
+            new SharedKernel.Messaging.OutboxEventPublisher<WalletDbContext>(_context),
+            _savingGoalClient);
+        outboxCtrl.ControllerContext = _controller.ControllerContext;
 
         var key = Guid.NewGuid().ToString();
-        var result = await _controller.GoalTransfer(wallet.Id, key, new GoalTransferRequest
+        var result = await outboxCtrl.GoalTransfer(wallet.Id, key, new GoalTransferRequest
         {
             GoalId = goalId,
             Amount = 400_000m
-        }) as ObjectResult;
+        }) as OkObjectResult;
 
         Assert.NotNull(result);
-        Assert.Equal(503, result.StatusCode);
+        Assert.Equal(200, result.StatusCode);
 
-        // Verify wallet balance is unchanged in DB (rollback)
         var refreshed = await _context.Wallets.AsNoTracking().FirstAsync(w => w.Id == wallet.Id);
-        Assert.Equal(1_000_000m, refreshed.Balance);
+        Assert.Equal(600_000m, refreshed.Balance);
+        var outbox = await _context.OutboxMessages.SingleAsync();
+        Assert.Equal("goal.funds_deposited", outbox.RoutingKey);
+        Assert.Null(outbox.SentAt);
     }
 
     [Fact]

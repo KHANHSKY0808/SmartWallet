@@ -11,7 +11,8 @@ public enum BalanceChangeReason
     TransferCompensation = 7,
     GoalDeposit = 8,
     GoalWithdraw = 9,
-    Adjustment = 10
+    Adjustment = 10,
+    GoalDepositRefund = 11
 }
 
 public class WalletBalanceHistory

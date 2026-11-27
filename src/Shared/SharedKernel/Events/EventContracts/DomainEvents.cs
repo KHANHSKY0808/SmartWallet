@@ -200,6 +200,17 @@ public record UserUnlockedEvent : IntegrationEvent
     public Guid ActorUserId { get; init; }
 }
 
+/// <summary>B5A-1 / D72: Hoàn tiền ví khi mục tiêu đã bị hủy hoặc không tồn tại.</summary>
+public record GoalDepositRejectedEvent : IntegrationEvent
+{
+    public Guid GoalId { get; init; }
+    public Guid WalletId { get; init; }
+    public Guid UserId { get; init; }
+    public decimal Amount { get; init; }
+    public Guid OriginalEventId { get; init; }
+    public string Reason { get; init; } = string.Empty;
+}
+
 /// <summary>D63: Admin thay đổi vai trò của người dùng.</summary>
 public record UserRolesChangedEvent : IntegrationEvent
 {

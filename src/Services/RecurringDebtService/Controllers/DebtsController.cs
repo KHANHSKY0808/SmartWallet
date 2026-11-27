@@ -143,8 +143,8 @@ public class DebtsController : ControllerBase
                 catch (Exception ex) when (ex is not OperationCanceledException)
                 {
                     await tx.RollbackAsync(cancellationToken);
-                    _logger.LogError(ex, "Lỗi phát sự kiện khi tạo khoản nợ {DebtId}", debt.Id);
-                    return StatusCode(503, new { code = "EVENT_PUBLISH_FAILED", message = "Không thể kết nối hệ thống sự kiện. Thao tác đã được hoàn tác." });
+                    _logger.LogError(ex, "Lỗi ghi Outbox sự kiện khi tạo khoản nợ {DebtId}", debt.Id);
+                    throw;
                 }
             }
 
@@ -252,8 +252,8 @@ public class DebtsController : ControllerBase
             catch (Exception ex) when (ex is not OperationCanceledException)
             {
                 await tx.RollbackAsync(cancellationToken);
-                _logger.LogError(ex, "Lỗi phát sự kiện khi xóa khoản nợ {DebtId}", debt.Id);
-                return StatusCode(503, new { code = "EVENT_PUBLISH_FAILED", message = "Không thể kết nối hệ thống sự kiện. Thao tác đã được hoàn tác." });
+                _logger.LogError(ex, "Lỗi ghi Outbox sự kiện khi xóa khoản nợ {DebtId}", debt.Id);
+                throw;
             }
         }
 
@@ -451,8 +451,8 @@ public class DebtsController : ControllerBase
             catch (Exception ex) when (ex is not OperationCanceledException)
             {
                 await tx.RollbackAsync(cancellationToken);
-                _logger.LogError(ex, "Lỗi phát sự kiện khi thanh toán nợ {DebtId}", debt.Id);
-                return StatusCode(503, new { code = "EVENT_PUBLISH_FAILED", message = "Không thể kết nối hệ thống sự kiện. Giao dịch đã được hoàn tác." });
+                _logger.LogError(ex, "Lỗi ghi Outbox sự kiện khi thanh toán nợ {DebtId}", debt.Id);
+                throw;
             }
         }
 

@@ -7,6 +7,8 @@ using SavingGoalService.Services;
 
 var builder = WebApplication.CreateBuilder(args);
 
+builder.AddSmartWalletLogging("SavingGoalService");
+
 // Cấu hình Controllers
 builder.Services.AddControllers();
 builder.Services.AddEndpointsApiExplorer();
@@ -29,7 +31,7 @@ builder.Services.AddHttpClient<IWalletServiceClient, WalletServiceClient>(client
 }).AddHttpMessageHandler(sp => new SystemTokenDelegatingHandler(sp.GetRequiredService<IConfiguration>(), "SavingGoalService"));
 
 // Cấu hình Event Publisher và Consumers
-builder.Services.AddSingleton<IEventPublisher, RabbitMqEventPublisher>();
+builder.Services.AddSmartWalletOutbox<SavingGoalDbContext>();
 builder.Services.AddHostedService<GoalFundsDepositedConsumer>();
 
 // Khai báo topology queue
@@ -77,11 +79,9 @@ using (var scope = app.Services.CreateScope())
     }
 }
 
-if (app.Environment.IsDevelopment())
-{
-    app.UseSwagger();
-    app.UseSwaggerUI();
-}
+app.UseSmartWalletOpenApi();
+
+app.UseSmartWalletRequestLogging();
 
 app.UseAuthentication();
 app.UseAuthorization();

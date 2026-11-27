@@ -7,6 +7,8 @@ using TransactionService.Services;
 
 var builder = WebApplication.CreateBuilder(args);
 
+builder.AddSmartWalletLogging("TransactionService");
+
 // Cấu hình Controllers
 builder.Services.AddControllers();
 builder.Services.AddEndpointsApiExplorer();
@@ -44,8 +46,8 @@ builder.Services.AddHttpClient<IFileServiceClient, FileServiceClient>(client =>
     client.Timeout = TimeSpan.FromSeconds(3);
 }).AddHttpMessageHandler(sp => new SystemTokenDelegatingHandler(sp.GetRequiredService<IConfiguration>(), "TransactionService"));
 
-// RabbitMQ Event Publisher
-builder.Services.AddSingleton<IEventPublisher, RabbitMqEventPublisher>();
+// Transactional Outbox (D72)
+builder.Services.AddSmartWalletOutbox<TransactionDbContext>();
 
 // Đăng ký RabbitMQ Consumers & Import worker (D68)
 builder.Services.AddSingleton<IImportJobQueue, ImportJobQueue>();
@@ -99,11 +101,9 @@ using (var scope = app.Services.CreateScope())
     context.Database.Migrate();
 }
 
-if (app.Environment.IsDevelopment())
-{
-    app.UseSwagger();
-    app.UseSwaggerUI();
-}
+app.UseSmartWalletOpenApi();
+
+app.UseSmartWalletRequestLogging();
 
 app.UseAuthentication();
 app.UseAuthorization();

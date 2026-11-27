@@ -2,12 +2,16 @@ using System.Diagnostics;
 using System.IdentityModel.Tokens.Jwt;
 using System.Security.Claims;
 using System.Text.Json;
+using System.Threading.RateLimiting;
 using ApiGateway.Yarp.Services;
+using Microsoft.AspNetCore.RateLimiting;
 using Microsoft.Extensions.Caching.Memory;
 using SharedKernel.Extensions;
 using StackExchange.Redis;
 
 var builder = WebApplication.CreateBuilder(args);
+
+builder.AddSmartWalletLogging("ApiGateway.Yarp");
 
 builder.Services.AddReverseProxy()
     .LoadFromConfig(builder.Configuration.GetSection("ReverseProxy"));
@@ -50,22 +54,115 @@ builder.Services.AddSingleton<BackupCoordinatorService>();
 builder.Services.AddHostedService<BackupSchedulerBackgroundService>();
 builder.Services.AddServiceHealthChecks(builder.Configuration);
 
+// D73 / H-03: Rate limiting tại Gateway (Auth 10/phút/IP không tin X-Forwarded-For giả; User 300/phút/sub)
+var rateLimitEnabled = !string.Equals(builder.Configuration["RateLimit:Enabled"], "false", StringComparison.OrdinalIgnoreCase);
+var authPermitLimit = int.TryParse(builder.Configuration["RateLimit:Auth:PermitLimit"], out var apl) ? apl : 10;
+var authWindowSeconds = int.TryParse(builder.Configuration["RateLimit:Auth:WindowSeconds"], out var aws) ? aws : 60;
+var userPermitLimit = int.TryParse(builder.Configuration["RateLimit:User:PermitLimit"], out var upl) ? upl : 300;
+var userWindowSeconds = int.TryParse(builder.Configuration["RateLimit:User:WindowSeconds"], out var uws) ? uws : 60;
+var trustedProxies = (builder.Configuration.GetSection("RateLimit:TrustedProxies").Get<string[]>() ?? [])
+    .Where(p => !string.IsNullOrWhiteSpace(p))
+    .ToHashSet(StringComparer.OrdinalIgnoreCase);
+
+if (rateLimitEnabled)
+{
+    builder.Services.AddRateLimiter(options =>
+    {
+        options.RejectionStatusCode = StatusCodes.Status429TooManyRequests;
+        options.GlobalLimiter = PartitionedRateLimiter.Create<HttpContext, string>(context =>
+        {
+            var path = context.Request.Path.Value ?? "/";
+            if (path.StartsWith("/health", StringComparison.OrdinalIgnoreCase) ||
+                path.StartsWith("/swagger", StringComparison.OrdinalIgnoreCase))
+            {
+                return RateLimitPartition.GetNoLimiter("bypass");
+            }
+
+            if (path.Equals("/api/auth/login", StringComparison.OrdinalIgnoreCase) ||
+                path.Equals("/api/auth/register", StringComparison.OrdinalIgnoreCase) ||
+                path.Equals("/api/auth/forgot-password", StringComparison.OrdinalIgnoreCase) ||
+                path.Equals("/api/auth/resend-confirmation", StringComparison.OrdinalIgnoreCase))
+            {
+                var remoteIp = context.Connection.RemoteIpAddress?.ToString() ?? "unknown";
+                var clientIp = remoteIp;
+                if (trustedProxies.Contains(remoteIp) &&
+                    context.Request.Headers.TryGetValue("X-Forwarded-For", out var xff))
+                {
+                    var forwarded = xff.ToString().Split(',').FirstOrDefault()?.Trim();
+                    if (!string.IsNullOrWhiteSpace(forwarded))
+                    {
+                        clientIp = forwarded;
+                    }
+                }
+
+                return RateLimitPartition.GetFixedWindowLimiter($"auth:{clientIp}", _ => new FixedWindowRateLimiterOptions
+                {
+                    PermitLimit = authPermitLimit,
+                    Window = TimeSpan.FromSeconds(authWindowSeconds),
+                    QueueLimit = 0,
+                    AutoReplenishment = true
+                });
+            }
+
+            if (context.User.Identity?.IsAuthenticated == true)
+            {
+                var sub = context.User.FindFirstValue(ClaimTypes.NameIdentifier)
+                    ?? context.User.FindFirstValue("sub")
+                    ?? "unknown";
+                return RateLimitPartition.GetFixedWindowLimiter($"user:{sub}", _ => new FixedWindowRateLimiterOptions
+                {
+                    PermitLimit = userPermitLimit,
+                    Window = TimeSpan.FromSeconds(userWindowSeconds),
+                    QueueLimit = 0,
+                    AutoReplenishment = true
+                });
+            }
+
+            return RateLimitPartition.GetNoLimiter("anon");
+        });
+
+        options.OnRejected = async (context, token) =>
+        {
+            var retryAfter = authWindowSeconds;
+            if (context.Lease.TryGetMetadata(MetadataName.RetryAfter, out var retrySpan))
+            {
+                retryAfter = Math.Max(1, (int)Math.Ceiling(retrySpan.TotalSeconds));
+            }
+            context.HttpContext.Response.Headers["Retry-After"] = retryAfter.ToString();
+            context.HttpContext.Response.StatusCode = StatusCodes.Status429TooManyRequests;
+            await context.HttpContext.Response.WriteAsJsonAsync(new
+            {
+                code = "RATE_LIMITED",
+                message = "Bạn thao tác quá nhanh, vui lòng thử lại sau."
+            }, token);
+        };
+    });
+}
+
 var app = builder.Build();
 
-// Middleware: X-Correlation-ID tracing
+// D75 / SEC-01: Security Headers cho mọi HTTP response qua Gateway
 app.Use(async (context, next) =>
 {
-    const string correlationHeader = "X-Correlation-ID";
-    if (!context.Request.Headers.TryGetValue(correlationHeader, out var correlationId) ||
-        string.IsNullOrWhiteSpace(correlationId))
+    context.Response.OnStarting(() =>
     {
-        correlationId = Guid.NewGuid().ToString("N");
-        context.Request.Headers[correlationHeader] = correlationId;
-    }
-
-    context.Response.Headers[correlationHeader] = correlationId;
+        var headers = context.Response.Headers;
+        headers["X-Content-Type-Options"] = "nosniff";
+        headers["X-Frame-Options"] = "DENY";
+        headers["Referrer-Policy"] = "strict-origin-when-cross-origin";
+        if (!context.Request.Path.StartsWithSegments("/swagger"))
+        {
+            headers["Content-Security-Policy"] = "frame-ancestors 'none'";
+        }
+        headers.Remove("Server");
+        headers.Remove("X-Powered-By");
+        return Task.CompletedTask;
+    });
     await next();
 });
+
+// D71 / LG-01, LG-02: CorrelationId + LogContext + sanitized HTTP request log
+app.UseSmartWalletRequestLogging();
 
 app.UseCors("AllowFrontend");
 app.UseAuthentication();
@@ -146,6 +243,10 @@ app.Use(async (context, next) =>
 });
 
 app.UseAuthorization();
+if (rateLimitEnabled)
+{
+    app.UseRateLimiter();
+}
 
 // Gateway health (giữ "healthy" viết thường theo test_G01, không lộ /metrics qua Gateway theo D61 / HM-05)
 app.MapGet("/health", () => Results.Ok(new
@@ -250,6 +351,65 @@ app.MapGet("/api/admin/backups", async (BackupCoordinatorService coordinator, Ca
     var history = await coordinator.GetHistoryAsync(ct);
     return Results.Ok(history);
 }).RequireAuthorization(AppPermissions.BackupsWrite);
+
+// D74 / SW-01..SW-03: Swagger UI tập trung tại Gateway (chỉ mở trong Development; Production trả 404)
+if (app.Environment.IsDevelopment())
+{
+    var swaggerServices = new Dictionary<string, (string ClusterKey, string DefaultUrl, string DisplayName)>(StringComparer.OrdinalIgnoreCase)
+    {
+        ["identity"]     = ("identity-cluster",     "http://localhost:8001", "IdentityService"),
+        ["profile"]      = ("profile-cluster",      "http://localhost:8002", "UserProfileService"),
+        ["wallet"]       = ("wallet-cluster",       "http://localhost:8003", "WalletService"),
+        ["transaction"]  = ("transaction-cluster",  "http://localhost:8004", "TransactionService"),
+        ["category"]     = ("category-cluster",     "http://localhost:8005", "CategoryService"),
+        ["budget"]       = ("budget-cluster",       "http://localhost:8006", "BudgetService"),
+        ["savinggoal"]   = ("saving-cluster",       "http://localhost:8007", "SavingGoalService"),
+        ["recurring"]    = ("recurring-cluster",    "http://localhost:8008", "RecurringDebtService"),
+        ["report"]       = ("report-cluster",       "http://localhost:8009", "ReportService"),
+        ["notification"] = ("notification-cluster", "http://localhost:8010", "NotificationService"),
+        ["audit"]        = ("audit-cluster",        "http://localhost:8011", "AuditService"),
+        ["file"]         = ("file-cluster",         "http://localhost:8012", "FileService")
+    };
+
+    app.MapGet("/swagger/docs/{service}.json", async (
+        string service,
+        IConfiguration config,
+        IHttpClientFactory httpClientFactory,
+        CancellationToken ct) =>
+    {
+        if (!swaggerServices.TryGetValue(service, out var entry))
+        {
+            return Results.NotFound(new { message = "Unknown service documentation." });
+        }
+
+        var baseUrl = config[$"ReverseProxy:Clusters:{entry.ClusterKey}:Destinations:d1:Address"] ?? entry.DefaultUrl;
+        var docUrl = $"{baseUrl.TrimEnd('/')}/openapi/v1.json";
+        try
+        {
+            var client = httpClientFactory.CreateClient("HealthProbe");
+            using var resp = await client.GetAsync(docUrl, ct);
+            if (!resp.IsSuccessStatusCode)
+            {
+                return Results.NotFound(new { message = $"OpenAPI doc unavailable for {service}." });
+            }
+            var json = await resp.Content.ReadAsStringAsync(ct);
+            return Results.Content(json, "application/json");
+        }
+        catch
+        {
+            return Results.NotFound(new { message = $"Service {service} is unreachable." });
+        }
+    });
+
+    app.UseSwaggerUI(c =>
+    {
+        c.RoutePrefix = "swagger";
+        foreach (var (key, entry) in swaggerServices)
+        {
+            c.SwaggerEndpoint($"/swagger/docs/{key}.json", entry.DisplayName);
+        }
+    });
+}
 
 app.MapReverseProxy();
 

@@ -7,7 +7,7 @@ using SharedKernel.Events;
 
 namespace SharedKernel.Messaging;
 
-public class RabbitMqEventPublisher : IEventPublisher, IDisposable
+public class RabbitMqEventPublisher : IEventPublisher, IBatchRawEventPublisher, IDisposable
 {
     private readonly ILogger<RabbitMqEventPublisher> _logger;
     private readonly ConnectionFactory _connectionFactory;
@@ -55,10 +55,8 @@ public class RabbitMqEventPublisher : IEventPublisher, IDisposable
                 _connection?.Dispose();
                 _connection = _connectionFactory.CreateConnection();
 
-                // Tạo channel tạm thời để khởi tạo Exchanges
                 using var channel = _connection.CreateModel();
 
-                // 1. Exchange chính
                 channel.ExchangeDeclare(
                     exchange: _exchangeName,
                     type: ExchangeType.Topic,
@@ -66,7 +64,6 @@ public class RabbitMqEventPublisher : IEventPublisher, IDisposable
                     autoDelete: false
                 );
 
-                // 2. Dead Letter Exchange (DLX)
                 channel.ExchangeDeclare(
                     exchange: _dlxExchangeName,
                     type: ExchangeType.Topic,
@@ -88,54 +85,122 @@ public class RabbitMqEventPublisher : IEventPublisher, IDisposable
     public Task PublishAsync<TEvent>(TEvent @event, string routingKey, CancellationToken cancellationToken = default)
         where TEvent : IntegrationEvent
     {
+        var json = JsonSerializer.Serialize(@event, @event.GetType());
+        var cid = SharedKernel.Extensions.CorrelationContext.CurrentCorrelationId ?? @event.Id.ToString();
+        return PublishRawAsync(@event.Id, @event.EventType, routingKey, json, cid, @event.OccurredAt, cancellationToken);
+    }
+
+    public Task PublishRawAsync(
+        Guid eventId,
+        string eventType,
+        string routingKey,
+        string payloadJson,
+        string? correlationId = null,
+        DateTime? occurredAtUtc = null,
+        CancellationToken cancellationToken = default)
+    {
         if (!EnsureConnection())
         {
-            _logger.LogError("Không thể publish sự kiện {EventType} ({RoutingKey}): Kết nối RabbitMQ không khả dụng.", @event.EventType, routingKey);
-            throw new InvalidOperationException($"Không thể publish sự kiện {@event.EventType}: Mất kết nối tới RabbitMQ.");
+            _logger.LogWarning("Không thể publish sự kiện {EventType} ({RoutingKey}): Kết nối RabbitMQ không khả dụng.", eventType, routingKey);
+            throw new InvalidOperationException($"Không thể publish sự kiện {eventType}: Mất kết nối tới RabbitMQ.");
         }
 
         try
         {
-            // Thread-Safe: Tạo channel riêng biệt cho từng thao tác publish và đóng lại khi xong
             using var channel = _connection!.CreateModel();
 
             // Kích hoạt Publisher Confirms để đảm bảo message đã an toàn trên Broker
             channel.ConfirmSelect();
 
-            var json = JsonSerializer.Serialize(@event, @event.GetType());
-            var body = Encoding.UTF8.GetBytes(json);
-
-            var properties = channel.CreateBasicProperties();
-            properties.DeliveryMode = 2; // Persistent: Lưu trữ message trên đĩa
-            properties.MessageId = @event.Id.ToString();
-            properties.Type = @event.EventType;
-            properties.Timestamp = new AmqpTimestamp(new DateTimeOffset(@event.OccurredAt).ToUnixTimeSeconds());
-            properties.Headers = new Dictionary<string, object>
-            {
-                { "correlation-id", @event.Id.ToString() },
-                { "event-type", @event.EventType }
-            };
-
-            channel.BasicPublish(
-                exchange: _exchangeName,
-                routingKey: routingKey,
-                basicProperties: properties,
-                body: body
-            );
+            PublishOnChannel(channel, eventId, eventType, routingKey, payloadJson, correlationId, occurredAtUtc);
 
             // Chờ broker xác nhận (Publisher Confirm) với timeout 5 giây
             channel.WaitForConfirmsOrDie(TimeSpan.FromSeconds(5));
 
-            _logger.LogInformation("Published sự kiện {EventType} (ID: {EventId}) thành công tới Exchange '{Exchange}' với RoutingKey '{RoutingKey}' (Publisher Confirmed).",
-                @event.EventType, @event.Id, _exchangeName, routingKey);
+            var cid = ResolveCorrelationId(eventId, correlationId);
+            _logger.LogInformation("Published sự kiện {EventType} (ID: {EventId}, CorrelationId: {CorrelationId}) thành công tới Exchange '{Exchange}' với RoutingKey '{RoutingKey}' (Publisher Confirmed).",
+                eventType, eventId, cid, _exchangeName, routingKey);
         }
         catch (Exception ex)
         {
-            _logger.LogError(ex, "Lỗi khi publish sự kiện {EventType} (ID: {EventId}) tới RabbitMQ", @event.EventType, @event.Id);
+            _logger.LogError(ex, "Lỗi khi publish sự kiện {EventType} (ID: {EventId}) tới RabbitMQ", eventType, eventId);
             throw;
         }
 
         return Task.CompletedTask;
+    }
+
+    public Task PublishBatchRawAsync(IReadOnlyList<OutboxMessage> messages, CancellationToken cancellationToken = default)
+    {
+        if (messages.Count == 0) return Task.CompletedTask;
+
+        if (!EnsureConnection())
+        {
+            _logger.LogWarning("Không thể publish lô {Count} sự kiện Outbox: Kết nối RabbitMQ không khả dụng.", messages.Count);
+            throw new InvalidOperationException("Không thể publish lô sự kiện Outbox: Mất kết nối tới RabbitMQ.");
+        }
+
+        try
+        {
+            using var channel = _connection!.CreateModel();
+            channel.ConfirmSelect();
+
+            foreach (var msg in messages)
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+                PublishOnChannel(channel, msg.Id, msg.Type, msg.RoutingKey, msg.Payload, msg.CorrelationId, msg.CreatedAt);
+            }
+
+            channel.WaitForConfirmsOrDie(TimeSpan.FromSeconds(10));
+            _logger.LogInformation("Published lô {Count} sự kiện Outbox thành công tới Exchange '{Exchange}' (Batch Publisher Confirmed).",
+                messages.Count, _exchangeName);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Lỗi khi publish lô {Count} sự kiện Outbox tới RabbitMQ", messages.Count);
+            throw;
+        }
+
+        return Task.CompletedTask;
+    }
+
+    private static string ResolveCorrelationId(Guid eventId, string? correlationId)
+        => !string.IsNullOrWhiteSpace(correlationId)
+            ? correlationId
+            : (SharedKernel.Extensions.CorrelationContext.CurrentCorrelationId ?? eventId.ToString());
+
+    private void PublishOnChannel(
+        IModel channel,
+        Guid eventId,
+        string eventType,
+        string routingKey,
+        string payloadJson,
+        string? correlationId,
+        DateTime? occurredAtUtc)
+    {
+        var body = Encoding.UTF8.GetBytes(payloadJson);
+        var cid = ResolveCorrelationId(eventId, correlationId);
+        var ts = occurredAtUtc ?? DateTime.UtcNow;
+
+        var properties = channel.CreateBasicProperties();
+        properties.DeliveryMode = 2; // Persistent: Lưu trữ message trên đĩa
+        properties.MessageId = eventId.ToString();
+        properties.CorrelationId = cid;
+        properties.Type = eventType;
+        properties.Timestamp = new AmqpTimestamp(new DateTimeOffset(DateTime.SpecifyKind(ts, DateTimeKind.Utc)).ToUnixTimeSeconds());
+        properties.Headers = new Dictionary<string, object>
+        {
+            { "X-Correlation-ID", cid },
+            { "correlation-id", cid },
+            { "event-type", eventType }
+        };
+
+        channel.BasicPublish(
+            exchange: _exchangeName,
+            routingKey: routingKey,
+            basicProperties: properties,
+            body: body
+        );
     }
 
     public void Dispose()

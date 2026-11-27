@@ -7,6 +7,8 @@ using RecurringDebtService.Services;
 
 var builder = WebApplication.CreateBuilder(args);
 
+builder.AddSmartWalletLogging("RecurringDebtService");
+
 // Cấu hình Controllers
 builder.Services.AddControllers();
 builder.Services.AddEndpointsApiExplorer();
@@ -44,7 +46,7 @@ builder.Services.AddHttpClient<ICategoryServiceClient, CategoryServiceClient>(cl
 }).AddHttpMessageHandler(sp => new SystemTokenDelegatingHandler(sp.GetRequiredService<IConfiguration>(), "RecurringDebtService"));
 
 // Cấu hình Event Publisher & Consumers
-builder.Services.AddSingleton<IEventPublisher, RabbitMqEventPublisher>();
+builder.Services.AddSmartWalletOutbox<RecurringDebtDbContext>();
 builder.Services.AddHostedService<RecurringTransactionFailedConsumer>();
 builder.Services.AddHostedService<RecurringSchedulerBackgroundService>();
 
@@ -86,11 +88,9 @@ using (var scope = app.Services.CreateScope())
     db.Database.ExecuteSqlRaw("PRAGMA journal_mode=WAL;");
 }
 
-if (app.Environment.IsDevelopment())
-{
-    app.UseSwagger();
-    app.UseSwaggerUI();
-}
+app.UseSmartWalletOpenApi();
+
+app.UseSmartWalletRequestLogging();
 
 app.UseAuthentication();
 app.UseAuthorization();

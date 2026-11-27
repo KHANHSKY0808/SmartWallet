@@ -96,11 +96,12 @@ public class AuthController : ControllerBase
             CreatedAt = DateTime.UtcNow
         };
 
+        await using var tx = await _context.Database.BeginTransactionAsync();
         _context.Users.Add(user);
         _context.UserTokens.Add(userToken);
         await _context.SaveChangesAsync();
 
-        // D62: IdentityService không gửi SMTP trực tiếp; chỉ phát EmailRequestedEvent sang NotificationService
+        // D62 + D72: Ghi EmailRequestedEvent & UserRegisteredEvent vào Outbox trong cùng DB transaction
         var confirmLink = $"{_frontendBaseUrl}/confirm-email?token={rawToken}";
         _logger.LogInformation("Prepared ConfirmEmail event for UserId {UserId} with link base {BaseUrl}/confirm-email?token=[REDACTED]",
             user.Id, _frontendBaseUrl);
@@ -143,6 +144,8 @@ public class AuthController : ControllerBase
                 _logger.LogWarning(ex, "Failed to publish UserRegisteredEvent to RabbitMQ broker");
             }
         }
+
+        await tx.CommitAsync();
 
         return StatusCode(201, new
         {
@@ -207,30 +210,17 @@ public class AuthController : ControllerBase
 
         if (_eventPublisher != null)
         {
-            try
+            await _eventPublisher.PublishAsync(new EmailRequestedEvent
             {
-                await _eventPublisher.PublishAsync(new EmailRequestedEvent
+                UserId = user.Id,
+                To = user.Email,
+                Template = "ConfirmEmail",
+                Data = new Dictionary<string, string>
                 {
-                    UserId = user.Id,
-                    To = user.Email,
-                    Template = "ConfirmEmail",
-                    Data = new Dictionary<string, string>
-                    {
-                        ["confirmLink"] = confirmLink,
-                        ["fullName"] = fullName
-                    }
-                }, "identity.email_requested");
-            }
-            catch (Exception ex)
-            {
-                _logger.LogError(ex, "Failed to publish resend EmailRequestedEvent for UserId {UserId}", user.Id);
-                await tx.RollbackAsync();
-                return StatusCode(503, new
-                {
-                    code = "EVENT_PUBLISH_FAILED",
-                    message = "Hệ thống gửi email đang tạm thời gián đoạn. Vui lòng thử lại sau ít phút."
-                });
-            }
+                    ["confirmLink"] = confirmLink,
+                    ["fullName"] = fullName
+                }
+            }, "identity.email_requested");
         }
 
         await tx.CommitAsync();
@@ -484,6 +474,7 @@ public class AuthController : ControllerBase
                 CreatedAt = DateTime.UtcNow
             };
 
+            await using var tx = await _context.Database.BeginTransactionAsync();
             _context.UserTokens.Add(userToken);
             await _context.SaveChangesAsync();
 
@@ -508,6 +499,7 @@ public class AuthController : ControllerBase
                     _logger.LogWarning(ex, "Failed to publish ResetPassword EmailRequestedEvent for UserId {UserId}", user.Id);
                 }
             }
+            await tx.CommitAsync();
         }
 
         return Ok(new { message = "Nếu email tồn tại trong hệ thống, hướng dẫn đặt lại mật khẩu đã được gửi." });

@@ -68,6 +68,7 @@ public class GoalFundsDepositedConsumer : BaseRabbitMqConsumer<GoalFundsDeposite
             UpdatedAt = DateTime.UtcNow
         };
 
+        await using var dbTx = await context.Database.BeginTransactionAsync(cancellationToken);
         await context.Transactions.AddAsync(tx, cancellationToken);
         await context.SaveChangesAsync(cancellationToken);
         _logger.LogInformation("Đã ghi nhận giao dịch chuyển tiền mục tiêu Type=3 (TxId: {TxId})", tx.Id);
@@ -96,6 +97,7 @@ public class GoalFundsDepositedConsumer : BaseRabbitMqConsumer<GoalFundsDeposite
                 Note = tx.Note
             }, "transaction.created", cancellationToken);
         }
+        await dbTx.CommitAsync(cancellationToken);
     }
 }
 
@@ -159,6 +161,7 @@ public class GoalFundsWithdrawnConsumer : BaseRabbitMqConsumer<GoalFundsWithdraw
             UpdatedAt = DateTime.UtcNow
         };
 
+        await using var dbTx = await context.Database.BeginTransactionAsync(cancellationToken);
         await context.Transactions.AddAsync(tx, cancellationToken);
         await context.SaveChangesAsync(cancellationToken);
         _logger.LogInformation("Đã ghi nhận giao dịch rút tiền mục tiêu Type=3 (TxId: {TxId})", tx.Id);
@@ -190,5 +193,6 @@ public class GoalFundsWithdrawnConsumer : BaseRabbitMqConsumer<GoalFundsWithdraw
                 Note = tx.Note
             }, "transaction.created", cancellationToken);
         }
+        await dbTx.CommitAsync(cancellationToken);
     }
 }

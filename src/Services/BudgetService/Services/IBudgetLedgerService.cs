@@ -1,4 +1,7 @@
+using System.Data;
+using Microsoft.Data.Sqlite;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore.Storage;
 using SharedKernel.Events.EventContracts;
 using SharedKernel.Messaging;
 using BudgetService.Data;
@@ -15,6 +18,8 @@ public interface IBudgetLedgerService
 
 public class BudgetLedgerService : IBudgetLedgerService
 {
+    private static readonly SemaphoreSlim SqliteWriteGate = new(1, 1);
+
     private readonly BudgetDbContext _context;
     private readonly IEventPublisher? _eventPublisher;
     private readonly ILogger<BudgetLedgerService> _logger;
@@ -29,6 +34,23 @@ public class BudgetLedgerService : IBudgetLedgerService
         _eventPublisher = eventPublisher;
     }
 
+    private async Task<(IDbContextTransaction DbTx, IAsyncDisposable? NativeTx)> BeginImmediateAsync(CancellationToken cancellationToken)
+    {
+        var conn = _context.Database.GetDbConnection();
+        if (conn is SqliteConnection sqliteConn && !string.Equals(sqliteConn.DataSource, ":memory:", StringComparison.OrdinalIgnoreCase))
+        {
+            if (sqliteConn.State != ConnectionState.Open)
+            {
+                await sqliteConn.OpenAsync(cancellationToken);
+            }
+            var nativeTx = sqliteConn.BeginTransaction(IsolationLevel.Unspecified, deferred: false);
+            var efTx = await _context.Database.UseTransactionAsync(nativeTx, cancellationToken);
+            return (efTx!, nativeTx);
+        }
+
+        return (await _context.Database.BeginTransactionAsync(cancellationToken), null);
+    }
+
     public async Task HandleTransactionCreatedAsync(TransactionCreatedEvent @event, CancellationToken cancellationToken = default)
     {
         // D2, D33, P-02, P-03: Chỉ tính chi tiêu Type = 1 (Chi). Bỏ qua Type 2 (Thu) và Type 3 (Chuyển tiền)
@@ -41,85 +63,103 @@ public class BudgetLedgerService : IBudgetLedgerService
         // D31, P-11: Kỳ ngân sách tính theo giờ Việt Nam (UTC+7) từ TransactionDate
         var (month, year) = VietnamTimeHelper.GetMonthYearInVietnam(@event.TransactionDate);
 
-        // D32, P-10: Tìm các ngân sách khớp danh mục hoặc danh mục cha
-        var matchingBudgets = await _context.Budgets
-            .Where(b => b.UserId == @event.UserId && b.Month == month && b.Year == year &&
-                        (b.CategoryId == @event.CategoryId ||
-                         (@event.CategoryParentId.HasValue && b.CategoryId == @event.CategoryParentId.Value)))
-            .ToListAsync(cancellationToken);
-
-        if (matchingBudgets.Count == 0)
-        {
-            return;
-        }
-
-        var alertsToPublish = new List<BudgetThresholdReachedEvent>();
-
-        // D36: DB transaction + publish confirm
-        using var dbTx = await _context.Database.BeginTransactionAsync(cancellationToken);
+        // N21 / OB-06: Đánh giá cờ cảnh báo ngân sách dưới khóa ghi BEGIN IMMEDIATE + gate nội bộ
+        await SqliteWriteGate.WaitAsync(cancellationToken);
         try
         {
-            foreach (var budget in matchingBudgets)
+            var (dbTx, nativeTx) = await BeginImmediateAsync(cancellationToken);
+            await using var _nativeScope = nativeTx;
+            await using var _dbTxScope = dbTx;
+            try
             {
-                // D33, P-04: Upsert sổ cái BudgetTransactions theo (BudgetId, TransactionId)
-                var ledger = await _context.BudgetTransactions
-                    .FirstOrDefaultAsync(bt => bt.BudgetId == budget.Id && bt.TransactionId == @event.TransactionId, cancellationToken);
-
-                if (ledger == null)
+                // N20 / OB-05: Bỏ qua nếu đã có tombstone DeletedTransactions trước đó
+                if (await _context.DeletedTransactions.AnyAsync(d => d.TransactionId == @event.TransactionId, cancellationToken))
                 {
-                    ledger = new BudgetTransaction
-                    {
-                        BudgetId = budget.Id,
-                        TransactionId = @event.TransactionId,
-                        UserId = @event.UserId,
-                        Amount = @event.Amount,
-                        TransactionDate = @event.TransactionDate,
-                        CreatedAt = DateTime.UtcNow,
-                        UpdatedAt = DateTime.UtcNow
-                    };
-                    _context.BudgetTransactions.Add(ledger);
+                    _logger.LogInformation("N20: Bỏ qua TransactionCreatedEvent {TransactionId} vì đã bị xóa trước đó.", @event.TransactionId);
+                    await dbTx.CommitAsync(cancellationToken);
+                    return;
                 }
-                else
+
+                // D32, P-10: Tìm các ngân sách khớp danh mục hoặc danh mục cha
+                var matchingBudgets = await _context.Budgets
+                    .Where(b => b.UserId == @event.UserId && b.Month == month && b.Year == year &&
+                                (b.CategoryId == @event.CategoryId ||
+                                 (@event.CategoryParentId.HasValue && b.CategoryId == @event.CategoryParentId.Value)))
+                    .ToListAsync(cancellationToken);
+
+                if (matchingBudgets.Count == 0)
                 {
-                    ledger.Amount = @event.Amount;
-                    ledger.TransactionDate = @event.TransactionDate;
-                    ledger.UpdatedAt = DateTime.UtcNow;
+                    await dbTx.CommitAsync(cancellationToken);
+                    return;
+                }
+
+                var alertsToPublish = new List<BudgetThresholdReachedEvent>();
+                foreach (var budget in matchingBudgets)
+                {
+                    // D33, P-04: Upsert sổ cái BudgetTransactions theo (BudgetId, TransactionId)
+                    var ledger = await _context.BudgetTransactions
+                        .FirstOrDefaultAsync(bt => bt.BudgetId == budget.Id && bt.TransactionId == @event.TransactionId, cancellationToken);
+
+                    if (ledger == null)
+                    {
+                        ledger = new BudgetTransaction
+                        {
+                            BudgetId = budget.Id,
+                            TransactionId = @event.TransactionId,
+                            UserId = @event.UserId,
+                            Amount = @event.Amount,
+                            TransactionDate = @event.TransactionDate,
+                            CreatedAt = DateTime.UtcNow,
+                            UpdatedAt = DateTime.UtcNow
+                        };
+                        _context.BudgetTransactions.Add(ledger);
+                    }
+                    else
+                    {
+                        ledger.Amount = @event.Amount;
+                        ledger.TransactionDate = @event.TransactionDate;
+                        ledger.UpdatedAt = DateTime.UtcNow;
+                    }
+
+                    await _context.SaveChangesAsync(cancellationToken);
+
+                    // D33: Tính lại CurrentSpent = SUM(Amount) từ sổ cái
+                    budget.CurrentSpent = await _context.BudgetTransactions
+                        .Where(bt => bt.BudgetId == budget.Id)
+                        .SumAsync(bt => bt.Amount, cancellationToken);
+                    budget.UpdatedAt = DateTime.UtcNow;
+
+                    // D35, A-01, A-02, A-03, A-04: Kiểm tra ngưỡng cảnh báo
+                    var alert = EvaluateAlert(budget);
+                    if (alert != null)
+                    {
+                        alertsToPublish.Add(alert);
+                    }
                 }
 
                 await _context.SaveChangesAsync(cancellationToken);
 
-                // D33: Tính lại CurrentSpent = SUM(Amount) từ sổ cái
-                budget.CurrentSpent = await _context.BudgetTransactions
-                    .Where(bt => bt.BudgetId == budget.Id)
-                    .SumAsync(bt => bt.Amount, cancellationToken);
-                budget.UpdatedAt = DateTime.UtcNow;
-
-                // D35, A-01, A-02, A-03, A-04: Kiểm tra ngưỡng cảnh báo
-                var alert = EvaluateAlert(budget);
-                if (alert != null)
+                // D72: Ghi OutboxMessages trong cùng DB transaction (không gọi broker trực tiếp)
+                if (_eventPublisher != null)
                 {
-                    alertsToPublish.Add(alert);
+                    foreach (var alert in alertsToPublish)
+                    {
+                        await _eventPublisher.PublishAsync(alert, "budget.threshold_reached", cancellationToken);
+                    }
                 }
+
+                await dbTx.CommitAsync(cancellationToken);
             }
-
-            await _context.SaveChangesAsync(cancellationToken);
-
-            // D36: Publish có publisher confirm
-            if (_eventPublisher != null)
+            catch (Exception ex)
             {
-                foreach (var alert in alertsToPublish)
-                {
-                    await _eventPublisher.PublishAsync(alert, "budget.threshold_reached", cancellationToken);
-                }
+                await dbTx.RollbackAsync(cancellationToken);
+                _logger.LogError(ex, "Lỗi khi xử lý TransactionCreatedEvent cho ngân sách, rollback DB transaction");
+                throw;
             }
-
-            await dbTx.CommitAsync(cancellationToken);
         }
-        catch (Exception ex)
+        finally
         {
-            await dbTx.RollbackAsync(cancellationToken);
-            _logger.LogError(ex, "Lỗi khi xử lý TransactionCreatedEvent cho ngân sách, rollback DB transaction");
-            throw; // Ném exception để message được Nack và retry theo D15/D36
+            SqliteWriteGate.Release();
         }
     }
 
@@ -130,9 +170,20 @@ public class BudgetLedgerService : IBudgetLedgerService
             return;
         }
 
-        using var dbTx = await _context.Database.BeginTransactionAsync(cancellationToken);
+        await SqliteWriteGate.WaitAsync(cancellationToken);
         try
         {
+            var (dbTx, nativeTx) = await BeginImmediateAsync(cancellationToken);
+            await using var _nativeScope = nativeTx;
+            await using var _dbTxScope = dbTx;
+            try
+            {
+                if (await _context.DeletedTransactions.AnyAsync(d => d.TransactionId == @event.TransactionId, cancellationToken))
+                {
+                    _logger.LogInformation("N20: Bỏ qua TransactionUpdatedEvent {TransactionId} vì đã bị xóa trước đó.", @event.TransactionId);
+                    await dbTx.CommitAsync(cancellationToken);
+                    return;
+                }
             var alertsToPublish = new List<BudgetThresholdReachedEvent>();
             var affectedBudgetIds = new HashSet<Guid>();
 
@@ -239,61 +290,83 @@ public class BudgetLedgerService : IBudgetLedgerService
 
             await dbTx.CommitAsync(cancellationToken);
         }
-        catch (Exception ex)
+            catch (Exception ex)
+            {
+                await dbTx.RollbackAsync(cancellationToken);
+                _logger.LogError(ex, "Lỗi khi xử lý TransactionUpdatedEvent cho ngân sách, rollback DB transaction");
+                throw;
+            }
+        }
+        finally
         {
-            await dbTx.RollbackAsync(cancellationToken);
-            _logger.LogError(ex, "Lỗi khi xử lý TransactionUpdatedEvent cho ngân sách, rollback DB transaction");
-            throw;
+            SqliteWriteGate.Release();
         }
     }
 
     public async Task HandleTransactionDeletedAsync(TransactionDeletedEvent @event, CancellationToken cancellationToken = default)
     {
-        if (@event.Type != 1)
-        {
-            return;
-        }
-
-        using var dbTx = await _context.Database.BeginTransactionAsync(cancellationToken);
+        await SqliteWriteGate.WaitAsync(cancellationToken);
         try
         {
-            var ledgersToRemove = await _context.BudgetTransactions
-                .Where(bt => bt.TransactionId == @event.TransactionId)
-                .ToListAsync(cancellationToken);
-
-            if (ledgersToRemove.Count == 0)
+            var (dbTx, nativeTx) = await BeginImmediateAsync(cancellationToken);
+            await using var _nativeScope = nativeTx;
+            await using var _dbTxScope = dbTx;
+            try
             {
-                return;
+                // N20 / OB-05: Luôn ghi tombstone kể cả khi TransactionDeletedEvent đến trước TransactionCreatedEvent
+                if (!await _context.DeletedTransactions.AnyAsync(d => d.TransactionId == @event.TransactionId, cancellationToken))
+                {
+                    _context.DeletedTransactions.Add(new DeletedTransactionTombstone
+                    {
+                        TransactionId = @event.TransactionId,
+                        DeletedAt = DateTime.UtcNow
+                    });
+                }
+
+                var ledgersToRemove = await _context.BudgetTransactions
+                    .Where(bt => bt.TransactionId == @event.TransactionId)
+                    .ToListAsync(cancellationToken);
+
+                if (ledgersToRemove.Count == 0)
+                {
+                    await _context.SaveChangesAsync(cancellationToken);
+                    await dbTx.CommitAsync(cancellationToken);
+                    return;
+                }
+
+                var affectedBudgetIds = ledgersToRemove.Select(l => l.BudgetId).Distinct().ToList();
+                _context.BudgetTransactions.RemoveRange(ledgersToRemove);
+                await _context.SaveChangesAsync(cancellationToken);
+
+                var affectedBudgets = await _context.Budgets
+                    .Where(b => affectedBudgetIds.Contains(b.Id))
+                    .ToListAsync(cancellationToken);
+
+                foreach (var budget in affectedBudgets)
+                {
+                    // D33, P-06: Tính lại CurrentSpent = SUM(Amount) từ sổ cái
+                    budget.CurrentSpent = await _context.BudgetTransactions
+                        .Where(bt => bt.BudgetId == budget.Id)
+                        .SumAsync(bt => bt.Amount, cancellationToken);
+                    budget.UpdatedAt = DateTime.UtcNow;
+
+                    // D35, A-05: Gỡ cờ cảnh báo tương ứng nếu spent giảm xuống dưới ngưỡng
+                    EvaluateAlert(budget); // Cập nhật cờ
+                }
+
+                await _context.SaveChangesAsync(cancellationToken);
+                await dbTx.CommitAsync(cancellationToken);
             }
-
-            var affectedBudgetIds = ledgersToRemove.Select(l => l.BudgetId).Distinct().ToList();
-            _context.BudgetTransactions.RemoveRange(ledgersToRemove);
-            await _context.SaveChangesAsync(cancellationToken);
-
-            var affectedBudgets = await _context.Budgets
-                .Where(b => affectedBudgetIds.Contains(b.Id))
-                .ToListAsync(cancellationToken);
-
-            foreach (var budget in affectedBudgets)
+            catch (Exception ex)
             {
-                // D33, P-06: Tính lại CurrentSpent = SUM(Amount) từ sổ cái
-                budget.CurrentSpent = await _context.BudgetTransactions
-                    .Where(bt => bt.BudgetId == budget.Id)
-                    .SumAsync(bt => bt.Amount, cancellationToken);
-                budget.UpdatedAt = DateTime.UtcNow;
-
-                // D35, A-05: Gỡ cờ cảnh báo tương ứng nếu spent giảm xuống dưới ngưỡng
-                EvaluateAlert(budget); // Cập nhật cờ
+                await dbTx.RollbackAsync(cancellationToken);
+                _logger.LogError(ex, "Lỗi khi xử lý TransactionDeletedEvent cho ngân sách, rollback DB transaction");
+                throw;
             }
-
-            await _context.SaveChangesAsync(cancellationToken);
-            await dbTx.CommitAsync(cancellationToken);
         }
-        catch (Exception ex)
+        finally
         {
-            await dbTx.RollbackAsync(cancellationToken);
-            _logger.LogError(ex, "Lỗi khi xử lý TransactionDeletedEvent cho ngân sách, rollback DB transaction");
-            throw;
+            SqliteWriteGate.Release();
         }
     }
 

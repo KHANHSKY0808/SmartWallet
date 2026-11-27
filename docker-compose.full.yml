@@ -1,3 +1,5 @@
+name: qlct-full
+
 x-service-env: &common-env
   ASPNETCORE_ENVIRONMENT: ${ASPNETCORE_ENVIRONMENT:-Production}
   Jwt__SigningKey: ${JWT_SIGNING_KEY:?JWT_SIGNING_KEY is required}
@@ -10,6 +12,7 @@ x-service-env: &common-env
   Redis__Configuration: ${REDIS_CONNECTION:-redis:6379}
   Consul__Host: ${CONSUL_HOST:-http://consul:8500}
   Backup__Directory: ${BACKUP_DIRECTORY:-/backups}
+  Seq__ServerUrl: ${SEQ_URL:-http://seq:5341}
 
 services:
   consul:
@@ -69,6 +72,18 @@ services:
       interval: 10s
       timeout: 5s
       retries: 5
+    networks:
+      - smartwallet-net
+
+  seq:
+    image: datalust/seq:2024.3
+    restart: unless-stopped
+    environment:
+      ACCEPT_EULA: "Y"
+      SEQ_FIRSTRUN_NOAUTHENTICATION: "true"
+    ports:
+      - "5341:5341"
+      - "8081:80"
     networks:
       - smartwallet-net
 
@@ -470,6 +485,7 @@ services:
       - "8000:8000"
     environment:
       <<: *common-env
+      RateLimit__Enabled: ${RATELIMIT_ENABLED:-true}
       ReverseProxy__Clusters__identity-cluster__Destinations__d1__Address: http://identityservice:8001
       ReverseProxy__Clusters__profile-cluster__Destinations__d1__Address: http://userprofileservice:8002
       ReverseProxy__Clusters__wallet-cluster__Destinations__d1__Address: http://walletservice:8003

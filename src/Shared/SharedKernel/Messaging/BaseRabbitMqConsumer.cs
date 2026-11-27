@@ -93,6 +93,24 @@ public abstract class BaseRabbitMqConsumer<TEvent> : BackgroundService where TEv
                         }
 
                         var eventId = @event.Id.ToString();
+                        var cid = ea.BasicProperties?.CorrelationId;
+                        if (string.IsNullOrWhiteSpace(cid) && ea.BasicProperties?.Headers != null)
+                        {
+                            if (ea.BasicProperties.Headers.TryGetValue("X-Correlation-ID", out var xcid) && xcid is byte[] xbytes)
+                            {
+                                cid = Encoding.UTF8.GetString(xbytes);
+                            }
+                            else if (ea.BasicProperties.Headers.TryGetValue("correlation-id", out var rcid) && rcid is byte[] rbytes)
+                            {
+                                cid = Encoding.UTF8.GetString(rbytes);
+                            }
+                        }
+                        cid ??= eventId;
+
+                        SharedKernel.Extensions.CorrelationContext.CurrentCorrelationId = cid;
+                        using var _cidProp = Serilog.Context.LogContext.PushProperty("CorrelationId", cid);
+                        _logger.LogInformation("Consuming {EventType} (ID: {EventId}, CorrelationId: {CorrelationId}) on queue {QueueName}.",
+                            @event.EventType, eventId, cid, _queueName);
 
                         // Hook Idempotency Check: Ngăn chặn xử lý trùng lặp sự kiện
                         if (await IsEventProcessedAsync(eventId, stoppingToken))
@@ -110,6 +128,7 @@ public abstract class BaseRabbitMqConsumer<TEvent> : BackgroundService where TEv
 
                         // Xác nhận xử lý thành công (ACK)
                         _channel.BasicAck(deliveryTag: ea.DeliveryTag, multiple: false);
+                        SharedKernel.Extensions.CorrelationContext.CurrentCorrelationId = null;
                     }
                     catch (Exception ex)
                     {

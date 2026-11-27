@@ -7,11 +7,11 @@ WORKDIR /src
 COPY SmartWallet.sln ./
 COPY src/Shared/SharedKernel/SharedKernel.csproj src/Shared/SharedKernel/
 COPY ${PROJECT_PATH}/${ASSEMBLY_NAME}.csproj ${PROJECT_PATH}/
-RUN dotnet restore "${PROJECT_PATH}/${ASSEMBLY_NAME}.csproj"
+RUN --mount=type=cache,id=nuget,target=/root/.nuget/packages,sharing=locked dotnet restore "${PROJECT_PATH}/${ASSEMBLY_NAME}.csproj"
 
 COPY src/Shared/SharedKernel/ src/Shared/SharedKernel/
 COPY ${PROJECT_PATH}/ ${PROJECT_PATH}/
-RUN dotnet publish "${PROJECT_PATH}/${ASSEMBLY_NAME}.csproj" -c Release -o /app/publish --no-restore
+RUN --mount=type=cache,id=nuget,target=/root/.nuget/packages,sharing=locked dotnet publish "${PROJECT_PATH}/${ASSEMBLY_NAME}.csproj" -c Release -o /app/publish --no-restore
 
 FROM mcr.microsoft.com/dotnet/aspnet:10.0 AS runtime
 ARG ASSEMBLY_NAME

@@ -7,6 +7,8 @@ using WalletService.Services;
 
 var builder = WebApplication.CreateBuilder(args);
 
+builder.AddSmartWalletLogging("WalletService");
+
 // Cấu hình Controllers
 builder.Services.AddControllers();
 builder.Services.AddEndpointsApiExplorer();
@@ -38,13 +40,14 @@ builder.Services.AddHttpClient<ISavingGoalClient, SavingGoalClient>(client =>
     client.Timeout = TimeSpan.FromSeconds(3);
 });
 
-builder.Services.AddSingleton<IEventPublisher, RabbitMqEventPublisher>();
+builder.Services.AddSmartWalletOutbox<WalletDbContext>();
 
-// Đăng ký RabbitMQ Consumers cho các sự kiện giao dịch (FIN-36) và rút tiền mục tiêu (FIN-82)
+// Đăng ký RabbitMQ Consumers cho các sự kiện giao dịch (FIN-36), rút tiền & hoàn tiền mục tiêu (FIN-82, B5A-1)
 builder.Services.AddHostedService<TransactionCreatedConsumer>();
 builder.Services.AddHostedService<TransactionUpdatedConsumer>();
 builder.Services.AddHostedService<TransactionDeletedConsumer>();
 builder.Services.AddHostedService<GoalFundsWithdrawnConsumer>();
+builder.Services.AddHostedService<GoalDepositRejectedConsumer>();
 
 // Khai báo topology queue transaction.money-transferred và các queue giao dịch
 try
@@ -58,6 +61,7 @@ try
     RabbitMqTopology.DeclareConsumerQueue(ch, "wallet.transaction-updated", "transaction.updated");
     RabbitMqTopology.DeclareConsumerQueue(ch, "wallet.transaction-deleted", "transaction.deleted");
     RabbitMqTopology.DeclareConsumerQueue(ch, "wallet.funds-withdrawn", "goal.funds_withdrawn");
+    RabbitMqTopology.DeclareConsumerQueue(ch, "wallet.goal-deposit-rejected", "goal.deposit_rejected");
 }
 catch (Exception)
 {
@@ -87,11 +91,9 @@ using (var scope = app.Services.CreateScope())
     context.Database.Migrate();
 }
 
-if (app.Environment.IsDevelopment())
-{
-    app.UseSwagger();
-    app.UseSwaggerUI();
-}
+app.UseSmartWalletOpenApi();
+
+app.UseSmartWalletRequestLogging();
 
 app.UseAuthentication();
 app.UseAuthorization();

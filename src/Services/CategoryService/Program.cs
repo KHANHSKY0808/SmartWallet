@@ -6,6 +6,8 @@ using CategoryService.Services;
 
 var builder = WebApplication.CreateBuilder(args);
 
+builder.AddSmartWalletLogging("CategoryService");
+
 // Cấu hình Controllers
 builder.Services.AddControllers();
 builder.Services.AddEndpointsApiExplorer();
@@ -29,7 +31,7 @@ builder.Services.AddHttpClient<ITransactionClient, TransactionClient>(client =>
     client.Timeout = TimeSpan.FromSeconds(3);
 });
 
-builder.Services.AddSingleton<IEventPublisher, RabbitMqEventPublisher>();
+builder.Services.AddSmartWalletOutbox<CategoryDbContext>();
 
 // Cấu hình JWT Bearer chung từ SharedKernel
 builder.Services.AddJwtAuthentication(builder.Configuration);
@@ -55,11 +57,9 @@ using (var scope = app.Services.CreateScope())
     await DefaultCategorySeeder.SeedAsync(context, app.Logger);
 }
 
-if (app.Environment.IsDevelopment())
-{
-    app.UseSwagger();
-    app.UseSwaggerUI();
-}
+app.UseSmartWalletOpenApi();
+
+app.UseSmartWalletRequestLogging();
 
 app.UseAuthentication();
 app.UseAuthorization();

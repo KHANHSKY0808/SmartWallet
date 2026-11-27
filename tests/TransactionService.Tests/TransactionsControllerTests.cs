@@ -519,10 +519,11 @@ public class TransactionsControllerTests : IDisposable
     }
 
     [Fact]
-    public async Task T17_CreateTransaction_PublisherThrows_RollsBackAndReturns503()
+    public async Task T17_CreateTransaction_WithOutbox_CommitsEntityAndOutboxWhenBrokerDown()
     {
-        // N15 / D30: Khi publish thất bại, DB rollback và trả 503
-        _eventPublisher.ShouldThrow = true;
+        // D72: Ghi Transaction + OutboxMessage cùng transaction; worker sẽ gửi khi broker lên
+        var outboxCtrl = new TransactionsController(_context, _walletClient, _categoryClient, NullLogger<TransactionsController>.Instance, new OutboxEventPublisher<TransactionDbContext>(_context));
+        outboxCtrl.ControllerContext = _controller.ControllerContext;
 
         var request = new CreateTransactionRequest
         {
@@ -532,19 +533,20 @@ public class TransactionsControllerTests : IDisposable
             TransactionDate = DateTime.UtcNow
         };
 
-        var result = await _controller.CreateTransaction(request) as ObjectResult;
+        var result = await outboxCtrl.CreateTransaction(request) as ObjectResult;
         Assert.NotNull(result);
-        Assert.Equal(503, result.StatusCode);
+        Assert.Equal(201, result.StatusCode);
 
-        // Transaction không được lưu vào DB (rollback)
         var count = await _context.Transactions.CountAsync(t => t.UserId == _userIdA);
-        Assert.Equal(0, count);
+        Assert.Equal(1, count);
+        var outbox = await _context.OutboxMessages.SingleAsync();
+        Assert.Equal("transaction.created", outbox.RoutingKey);
+        Assert.Null(outbox.SentAt);
     }
 
     [Fact]
-    public async Task T18_UpdateTransaction_PublisherThrows_RollsBackAndReturns503()
+    public async Task T18_UpdateTransaction_WithOutbox_CommitsUpdateAndOutboxAtomically()
     {
-        // N15 / D30: Khi publish thất bại, DB rollback và trả 503
         var tx = new Transaction
         {
             UserId = _userIdA,
@@ -556,7 +558,8 @@ public class TransactionsControllerTests : IDisposable
         _context.Transactions.Add(tx);
         await _context.SaveChangesAsync();
 
-        _eventPublisher.ShouldThrow = true;
+        var outboxCtrl = new TransactionsController(_context, _walletClient, _categoryClient, NullLogger<TransactionsController>.Instance, new OutboxEventPublisher<TransactionDbContext>(_context));
+        outboxCtrl.ControllerContext = _controller.ControllerContext;
 
         var updateRequest = new UpdateTransactionRequest
         {
@@ -566,19 +569,20 @@ public class TransactionsControllerTests : IDisposable
             RowVersion = tx.RowVersion
         };
 
-        var result = await _controller.UpdateTransaction(tx.Id, updateRequest) as ObjectResult;
+        var result = await outboxCtrl.UpdateTransaction(tx.Id, updateRequest) as OkObjectResult;
         Assert.NotNull(result);
-        Assert.Equal(503, result.StatusCode);
+        Assert.Equal(200, result.StatusCode);
 
-        // Transaction trong DB vẫn giữ nguyên giá trị cũ
         var currentTx = await _context.Transactions.AsNoTracking().FirstAsync(t => t.Id == tx.Id);
-        Assert.Equal(50000m, currentTx.Amount);
+        Assert.Equal(70000m, currentTx.Amount);
+        var outbox = await _context.OutboxMessages.SingleAsync();
+        Assert.Equal("transaction.updated", outbox.RoutingKey);
+        Assert.Null(outbox.SentAt);
     }
 
     [Fact]
-    public async Task T19_DeleteTransaction_PublisherThrows_RollsBackAndReturns503()
+    public async Task T19_DeleteTransaction_WithOutbox_CommitsDeleteAndOutboxAtomically()
     {
-        // N15 / D30: Khi publish thất bại, DB rollback và trả 503
         var tx = new Transaction
         {
             UserId = _userIdA,
@@ -590,15 +594,18 @@ public class TransactionsControllerTests : IDisposable
         _context.Transactions.Add(tx);
         await _context.SaveChangesAsync();
 
-        _eventPublisher.ShouldThrow = true;
+        var outboxCtrl = new TransactionsController(_context, _walletClient, _categoryClient, NullLogger<TransactionsController>.Instance, new OutboxEventPublisher<TransactionDbContext>(_context));
+        outboxCtrl.ControllerContext = _controller.ControllerContext;
 
-        var result = await _controller.DeleteTransaction(tx.Id) as ObjectResult;
+        var result = await outboxCtrl.DeleteTransaction(tx.Id) as OkObjectResult;
         Assert.NotNull(result);
-        Assert.Equal(503, result.StatusCode);
+        Assert.Equal(200, result.StatusCode);
 
-        // Transaction vẫn còn trong DB (rollback)
         var exists = await _context.Transactions.AnyAsync(t => t.Id == tx.Id);
-        Assert.True(exists);
+        Assert.False(exists);
+        var outbox = await _context.OutboxMessages.SingleAsync();
+        Assert.Equal("transaction.deleted", outbox.RoutingKey);
+        Assert.Null(outbox.SentAt);
     }
 
     [Fact]

@@ -423,33 +423,34 @@ public class WalletTransferSagaTests : IDisposable
     }
 
     [Fact]
-    public async Task T18_Transfer_EventPublishError_DoesNotRollbackTransferSuccess()
+    public async Task T18_Transfer_WithOutbox_CommitsTransferAndOutboxWhenBrokerDown()
     {
         var (bank, cash) = await SeedWallets(_userA, 10_000_000m, 5_000_000m);
-        // Event publisher ném lỗi
-        var failingPublisher = new FailingPublisher();
-        var controllerWithFailingPub = new WalletsController(
+        var outboxPublisher = new SharedKernel.Messaging.OutboxEventPublisher<WalletDbContext>(_context);
+        var controllerWithOutbox = new WalletsController(
             _context,
             _ledger,
             _profileClient,
             NullLogger<WalletsController>.Instance,
-            failingPublisher
+            outboxPublisher
         );
         var claims = new ClaimsPrincipal(new ClaimsIdentity(new[]
         {
             new Claim(ClaimTypes.NameIdentifier, _userA.ToString()),
             new Claim("sub", _userA.ToString())
         }, "TestAuth"));
-        controllerWithFailingPub.ControllerContext = new ControllerContext { HttpContext = new DefaultHttpContext { User = claims } };
+        controllerWithOutbox.ControllerContext = new ControllerContext { HttpContext = new DefaultHttpContext { User = claims } };
 
-        var res = await controllerWithFailingPub.Transfer(Guid.NewGuid().ToString(), new TransferRequest { FromWalletId = bank, ToWalletId = cash, Amount = 2_000_000m }) as OkObjectResult;
+        var res = await controllerWithOutbox.Transfer(Guid.NewGuid().ToString(), new TransferRequest { FromWalletId = bank, ToWalletId = cash, Amount = 2_000_000m }) as OkObjectResult;
 
         Assert.NotNull(res);
         Assert.Equal(200, res.StatusCode);
 
-        // Số dư đã đổi, transfer là Success (chọn cách a: log warning và giữ transfer)
         var bankW = await _context.Wallets.FindAsync(bank);
         Assert.Equal(8_000_000m, bankW!.Balance);
+        var outbox = await _context.OutboxMessages.SingleAsync();
+        Assert.Equal("wallet.transferred", outbox.RoutingKey);
+        Assert.Null(outbox.SentAt);
     }
 
     [Fact]

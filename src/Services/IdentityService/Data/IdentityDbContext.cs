@@ -1,9 +1,10 @@
 using IdentityService.Models;
 using Microsoft.EntityFrameworkCore;
+using SharedKernel.Messaging;
 
 namespace IdentityService.Data;
 
-public class IdentityDbContext : DbContext
+public class IdentityDbContext : DbContext, IOutboxDbContext
 {
     public IdentityDbContext(DbContextOptions<IdentityDbContext> options) : base(options)
     {
@@ -16,6 +17,7 @@ public class IdentityDbContext : DbContext
     public DbSet<UserRole> UserRoles => Set<UserRole>();
     public DbSet<RefreshToken> RefreshTokens => Set<RefreshToken>();
     public DbSet<UserToken> UserTokens => Set<UserToken>();
+    public DbSet<OutboxMessage> OutboxMessages => Set<OutboxMessage>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
@@ -114,6 +116,8 @@ public class IdentityDbContext : DbContext
                 .HasForeignKey(e => e.UserId)
                 .OnDelete(DeleteBehavior.Cascade);
         });
+
+        modelBuilder.ConfigureOutboxMessages();
     }
 }
 

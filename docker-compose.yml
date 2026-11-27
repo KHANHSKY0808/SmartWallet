@@ -46,3 +46,14 @@ services:
     ports:
       - "1025:1025"   # SMTP server
       - "8025:8025"   # Web UI xem email
+
+  seq:
+    image: datalust/seq:2024.3
+    container_name: qlct-seq
+    restart: unless-stopped
+    environment:
+      ACCEPT_EULA: "Y"
+      SEQ_FIRSTRUN_NOAUTHENTICATION: "true"
+    ports:
+      - "5341:5341"
+      - "8081:80"

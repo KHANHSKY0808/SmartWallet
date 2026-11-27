@@ -121,6 +121,31 @@ public class GoalFundsConsumerTests : IDisposable
         Assert.IsType<GoalCompletedEvent>(_publisher.PublishedEvents[0]);
     }
 
+    [Fact]
+    public async Task OB07_B5A1_DepositToMissingOrCancelledGoal_EmitsRejectedRefundEventWithoutThrowing()
+    {
+        var missingGoalId = Guid.NewGuid();
+        var walletId = Guid.NewGuid();
+        var evt = new GoalFundsDepositedEvent
+        {
+            Id = Guid.NewGuid(),
+            GoalId = missingGoalId,
+            WalletId = walletId,
+            UserId = _userId,
+            Amount = 500_000m,
+            GoalName = "Goal đã hủy"
+        };
+
+        await _consumer.HandleEventAsync(evt);
+
+        var rejected = Assert.Single(_publisher.PublishedEvents.OfType<GoalDepositRejectedEvent>());
+        Assert.Equal(missingGoalId, rejected.GoalId);
+        Assert.Equal(walletId, rejected.WalletId);
+        Assert.Equal(_userId, rejected.UserId);
+        Assert.Equal(500_000m, rejected.Amount);
+        Assert.Equal(evt.Id, rejected.OriginalEventId);
+    }
+
     public void Dispose()
     {
         _context.Dispose();

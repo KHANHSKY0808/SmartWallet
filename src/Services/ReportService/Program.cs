@@ -1,4 +1,6 @@
+using System.Data.Common;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore.Diagnostics;
 using SharedKernel.Extensions;
 using SharedKernel.Messaging;
 using StackExchange.Redis;
@@ -8,16 +10,19 @@ using ReportService.Services;
 
 var builder = WebApplication.CreateBuilder(args);
 
+builder.AddSmartWalletLogging("ReportService");
+
 builder.Services.AddControllers();
 builder.Services.AddEndpointsApiExplorer();
 builder.Services.AddSwaggerGen();
 
-// Database SQLite
+// Database SQLite + N54: áp PRAGMA synchronous=NORMAL & busy_timeout=5000 trên mọi kết nối EF
 var connectionString = builder.Configuration.GetConnectionString("DefaultConnection")
     ?? "Data Source=../../../database/report.db;Cache=Shared";
 builder.Services.AddDbContext<ReportDbContext>(options =>
 {
     options.UseSqlite(connectionString);
+    options.AddInterceptors(new SqlitePragmaInterceptor());
 });
 
 builder.Services.AddSingleton(TimeProvider.System);
@@ -65,7 +70,7 @@ builder.Services.AddHttpClient<ITransactionBackfillClient, TransactionBackfillCl
 builder.Services.AddScoped<IReportQueryService, ReportQueryService>();
 builder.Services.AddScoped<IBackfillService, BackfillService>();
 builder.Services.AddSingleton<IExportGenerator, ExportGenerator>();
-builder.Services.AddSingleton<IEventPublisher, RabbitMqEventPublisher>();
+builder.Services.AddSmartWalletOutbox<ReportDbContext>();
 
 // Background Workers & Consumers
 builder.Services.AddHostedService<TransactionCreatedConsumer>();
@@ -110,16 +115,14 @@ using (var scope = app.Services.CreateScope())
     db.Database.Migrate();
     try
     {
-        db.Database.ExecuteSqlRaw("PRAGMA journal_mode=WAL; PRAGMA synchronous=NORMAL; PRAGMA busy_timeout=5000;");
+        db.Database.ExecuteSqlRaw("PRAGMA journal_mode=WAL;");
     }
     catch { }
 }
 
-if (app.Environment.IsDevelopment())
-{
-    app.UseSwagger();
-    app.UseSwaggerUI();
-}
+app.UseSmartWalletOpenApi();
+
+app.UseSmartWalletRequestLogging();
 
 app.UseAuthentication();
 app.UseAuthorization();
@@ -132,3 +135,20 @@ app.MapControllers();
 app.Run();
 
 public partial class Program { }
+
+sealed class SqlitePragmaInterceptor : DbConnectionInterceptor
+{
+    public override void ConnectionOpened(DbConnection connection, ConnectionEndEventData eventData)
+    {
+        using var cmd = connection.CreateCommand();
+        cmd.CommandText = "PRAGMA synchronous=NORMAL; PRAGMA busy_timeout=5000;";
+        cmd.ExecuteNonQuery();
+    }
+
+    public override async Task ConnectionOpenedAsync(DbConnection connection, ConnectionEndEventData eventData, CancellationToken cancellationToken = default)
+    {
+        await using var cmd = connection.CreateCommand();
+        cmd.CommandText = "PRAGMA synchronous=NORMAL; PRAGMA busy_timeout=5000;";
+        await cmd.ExecuteNonQueryAsync(cancellationToken);
+    }
+}

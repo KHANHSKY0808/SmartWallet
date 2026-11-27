@@ -3,6 +3,7 @@ using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.Data.Sqlite;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging.Abstractions;
 using RecurringDebtService.Controllers;
 using RecurringDebtService.Data;
@@ -16,16 +17,17 @@ namespace RecurringDebtService.Tests;
 
 public class DebtControllerD30Tests : IDisposable
 {
-    private class FailingEventPublisher : IEventPublisher
+    private class FakeRawPublisher : IRawEventPublisher
     {
         public bool ShouldThrow { get; set; } = true;
-        public Task PublishAsync<TEvent>(TEvent @event, string routingKey, CancellationToken cancellationToken = default)
-            where TEvent : IntegrationEvent
+        public List<(Guid Id, string RoutingKey, string Payload)> Sent { get; } = new();
+        public Task PublishRawAsync(Guid eventId, string eventType, string routingKey, string payloadJson, string? correlationId = null, DateTime? occurredAtUtc = null, CancellationToken cancellationToken = default)
         {
             if (ShouldThrow)
             {
-                throw new InvalidOperationException("RabbitMQ connection refused (simulated D30 test)");
+                throw new InvalidOperationException("RabbitMQ connection refused (simulated D72 test)");
             }
+            Sent.Add((eventId, routingKey, payloadJson));
             return Task.CompletedTask;
         }
     }
@@ -52,7 +54,9 @@ public class DebtControllerD30Tests : IDisposable
 
     private readonly SqliteConnection _connection;
     private readonly RecurringDebtDbContext _context;
-    private readonly FailingEventPublisher _publisher;
+    private readonly FakeRawPublisher _rawPublisher;
+    private readonly OutboxDispatcher<RecurringDebtDbContext> _dispatcher;
+    private readonly ServiceProvider _sp;
     private readonly FakeWalletClient _walletClient;
     private readonly DebtsController _controller;
     private readonly Guid _userA = Guid.NewGuid();
@@ -70,7 +74,12 @@ public class DebtControllerD30Tests : IDisposable
         _context = new RecurringDebtDbContext(options);
         _context.Database.EnsureCreated();
 
-        _publisher = new FailingEventPublisher();
+        var wakeSignal = new OutboxWakeSignal();
+        var outboxPublisher = new OutboxEventPublisher<RecurringDebtDbContext>(_context, wakeSignal);
+        _rawPublisher = new FakeRawPublisher();
+        _sp = new ServiceCollection().AddSingleton(_context).BuildServiceProvider();
+        _dispatcher = new OutboxDispatcher<RecurringDebtDbContext>(_sp, _rawPublisher, wakeSignal, NullLogger<OutboxDispatcher<RecurringDebtDbContext>>.Instance);
+
         _walletClient = new FakeWalletClient();
         _walletClient.Wallets[_walletA] = new WalletValidationResult(true, _userA, false, "VND");
 
@@ -79,7 +88,7 @@ public class DebtControllerD30Tests : IDisposable
             new FixedSchedulerEngine(),
             _walletClient,
             NullLogger<DebtsController>.Instance,
-            _publisher);
+            outboxPublisher);
 
         SetUser(_userA);
     }
@@ -101,15 +110,16 @@ public class DebtControllerD30Tests : IDisposable
 
     public void Dispose()
     {
+        _sp.Dispose();
         _context.Dispose();
         _connection.Close();
         _connection.Dispose();
     }
 
     [Fact]
-    public async Task Test_N37_CreateDebt_PublisherThrows_Returns503AndRollsBack()
+    public async Task Test_N37_CreateDebt_WithOutbox_CommitsDebtAndOutboxWhenBrokerDown()
     {
-        _publisher.ShouldThrow = true;
+        _rawPublisher.ShouldThrow = true;
 
         var result = await _controller.CreateDebt(new CreateDebtRequest
         {
@@ -121,12 +131,19 @@ public class DebtControllerD30Tests : IDisposable
         }, CancellationToken.None) as ObjectResult;
 
         Assert.NotNull(result);
-        Assert.Equal(503, result.StatusCode);
-        Assert.Empty(await _context.Debts.ToListAsync());
+        Assert.Equal(201, result.StatusCode);
+        Assert.Single(await _context.Debts.ToListAsync());
+        var outbox = await _context.OutboxMessages.SingleAsync();
+        Assert.Equal("debt.transaction_requested", outbox.RoutingKey);
+        Assert.Null(outbox.SentAt);
+
+        _rawPublisher.ShouldThrow = false;
+        Assert.Equal(1, await _dispatcher.ProcessPendingAsync());
+        Assert.Single(_rawPublisher.Sent);
     }
 
     [Fact]
-    public async Task Test_N37_MakePayment_PublisherThrows_Returns503AndRollsBack()
+    public async Task Test_N37_MakePayment_WithOutbox_CommitsPaymentAndOutboxWhenBrokerDown()
     {
         var debt = new Debt
         {
@@ -145,7 +162,7 @@ public class DebtControllerD30Tests : IDisposable
         _context.Debts.Add(debt);
         await _context.SaveChangesAsync();
 
-        _publisher.ShouldThrow = true;
+        _rawPublisher.ShouldThrow = true;
         SetUser(_userA, Guid.NewGuid().ToString());
 
         var result = await _controller.MakePayment(debt.Id, new CreateDebtPaymentRequest
@@ -155,17 +172,19 @@ public class DebtControllerD30Tests : IDisposable
         }, CancellationToken.None) as ObjectResult;
 
         Assert.NotNull(result);
-        Assert.Equal(503, result.StatusCode);
+        Assert.Equal(201, result.StatusCode);
 
         _context.ChangeTracker.Clear();
         var refreshed = await _context.Debts.FirstAsync(d => d.Id == debt.Id);
-        Assert.Equal(0m, refreshed.PaidAmount);
-        Assert.Empty(await _context.DebtPayments.ToListAsync());
-        Assert.Empty(await _context.IdempotencyRecords.ToListAsync());
+        Assert.Equal(2_000_000m, refreshed.PaidAmount);
+        Assert.Single(await _context.DebtPayments.ToListAsync());
+        var outbox = await _context.OutboxMessages.SingleAsync();
+        Assert.Equal("debt.transaction_requested", outbox.RoutingKey);
+        Assert.Null(outbox.SentAt);
     }
 
     [Fact]
-    public async Task Test_N37_DeleteDebt_PublisherThrows_Returns503AndRollsBack()
+    public async Task Test_N37_DeleteDebt_WithOutbox_CommitsDeleteAndOutboxWhenBrokerDown()
     {
         var debt = new Debt
         {
@@ -184,14 +203,17 @@ public class DebtControllerD30Tests : IDisposable
         _context.Debts.Add(debt);
         await _context.SaveChangesAsync();
 
-        _publisher.ShouldThrow = true;
-        var result = await _controller.DeleteDebt(debt.Id, CancellationToken.None) as ObjectResult;
+        _rawPublisher.ShouldThrow = true;
+        var result = await _controller.DeleteDebt(debt.Id, CancellationToken.None) as OkObjectResult;
 
         Assert.NotNull(result);
-        Assert.Equal(503, result.StatusCode);
+        Assert.Equal(200, result.StatusCode);
 
         _context.ChangeTracker.Clear();
-        Assert.NotNull(await _context.Debts.FirstOrDefaultAsync(d => d.Id == debt.Id));
+        Assert.Null(await _context.Debts.FirstOrDefaultAsync(d => d.Id == debt.Id));
+        var outbox = await _context.OutboxMessages.SingleAsync();
+        Assert.Equal("debt.deleted", outbox.RoutingKey);
+        Assert.Null(outbox.SentAt);
     }
 
     [Fact]

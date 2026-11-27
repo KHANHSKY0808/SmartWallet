@@ -1,9 +1,10 @@
 using Microsoft.EntityFrameworkCore;
 using RecurringDebtService.Models;
+using SharedKernel.Messaging;
 
 namespace RecurringDebtService.Data;
 
-public class RecurringDebtDbContext : DbContext
+public class RecurringDebtDbContext : DbContext, IOutboxDbContext
 {
     public RecurringDebtDbContext(DbContextOptions<RecurringDebtDbContext> options) : base(options)
     {
@@ -14,6 +15,7 @@ public class RecurringDebtDbContext : DbContext
     public DbSet<DebtPayment> DebtPayments => Set<DebtPayment>();
     public DbSet<IdempotencyRecord> IdempotencyRecords => Set<IdempotencyRecord>();
     public DbSet<ProcessedEvent> ProcessedEvents => Set<ProcessedEvent>();
+    public DbSet<OutboxMessage> OutboxMessages => Set<OutboxMessage>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
@@ -63,6 +65,8 @@ public class RecurringDebtDbContext : DbContext
             entity.ToTable("ProcessedEvents");
             entity.HasKey(e => e.Id);
         });
+
+        modelBuilder.ConfigureOutboxMessages();
     }
 }
 

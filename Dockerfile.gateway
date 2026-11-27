@@ -5,11 +5,11 @@ WORKDIR /src
 COPY SmartWallet.sln ./
 COPY src/Shared/SharedKernel/SharedKernel.csproj src/Shared/SharedKernel/
 COPY src/Gateway/ApiGateway.Yarp/ApiGateway.Yarp.csproj src/Gateway/ApiGateway.Yarp/
-RUN dotnet restore "src/Gateway/ApiGateway.Yarp/ApiGateway.Yarp.csproj"
+RUN --mount=type=cache,id=nuget,target=/root/.nuget/packages,sharing=locked dotnet restore "src/Gateway/ApiGateway.Yarp/ApiGateway.Yarp.csproj"
 
 COPY src/Shared/SharedKernel/ src/Shared/SharedKernel/
 COPY src/Gateway/ApiGateway.Yarp/ src/Gateway/ApiGateway.Yarp/
-RUN dotnet publish "src/Gateway/ApiGateway.Yarp/ApiGateway.Yarp.csproj" -c Release -o /app/publish --no-restore
+RUN --mount=type=cache,id=nuget,target=/root/.nuget/packages,sharing=locked dotnet publish "src/Gateway/ApiGateway.Yarp/ApiGateway.Yarp.csproj" -c Release -o /app/publish --no-restore
 
 FROM mcr.microsoft.com/dotnet/aspnet:10.0 AS runtime
 ENV ASPNETCORE_URLS="http://0.0.0.0:8000" \

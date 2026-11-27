@@ -1,9 +1,10 @@
 using Microsoft.EntityFrameworkCore;
+using SharedKernel.Messaging;
 using WalletService.Models;
 
 namespace WalletService.Data;
 
-public class WalletDbContext : DbContext
+public class WalletDbContext : DbContext, IOutboxDbContext
 {
     public WalletDbContext(DbContextOptions<WalletDbContext> options) : base(options)
     {
@@ -13,6 +14,7 @@ public class WalletDbContext : DbContext
     public DbSet<WalletTransfer> WalletTransfers => Set<WalletTransfer>();
     public DbSet<IdempotencyRecord> IdempotencyKeys => Set<IdempotencyRecord>();
     public DbSet<WalletBalanceHistory> WalletBalanceHistory => Set<WalletBalanceHistory>();
+    public DbSet<OutboxMessage> OutboxMessages => Set<OutboxMessage>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
@@ -69,6 +71,8 @@ public class WalletDbContext : DbContext
             entity.Property(h => h.BalanceAfter).HasColumnType("decimal(18,2)");
             entity.HasIndex(h => new { h.UserId, h.WalletId });
         });
+
+        modelBuilder.ConfigureOutboxMessages();
     }
 
     public override int SaveChanges()

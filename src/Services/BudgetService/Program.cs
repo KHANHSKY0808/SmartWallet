@@ -1,4 +1,6 @@
+using System.Data.Common;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore.Diagnostics;
 using SharedKernel.Extensions;
 using SharedKernel.Messaging;
 using BudgetService.Consumers;
@@ -6,6 +8,8 @@ using BudgetService.Data;
 using BudgetService.Services;
 
 var builder = WebApplication.CreateBuilder(args);
+
+builder.AddSmartWalletLogging("BudgetService");
 
 // Cấu hình Controllers
 builder.Services.AddControllers();
@@ -20,6 +24,7 @@ var connectionString = builder.Configuration.GetConnectionString("DefaultConnect
 builder.Services.AddDbContext<BudgetDbContext>(options =>
 {
     options.UseSqlite(connectionString);
+    options.AddInterceptors(new BudgetSqlitePragmaInterceptor());
 });
 
 // Đăng ký Ledger Service
@@ -40,7 +45,7 @@ builder.Services.AddHttpClient<ITransactionClient, TransactionClient>(client =>
     client.Timeout = TimeSpan.FromSeconds(5);
 });
 
-builder.Services.AddSingleton<IEventPublisher, RabbitMqEventPublisher>();
+builder.Services.AddSmartWalletOutbox<BudgetDbContext>();
 
 // Đăng ký RabbitMQ Consumers cho các sự kiện giao dịch & danh mục
 builder.Services.AddHostedService<TransactionCreatedConsumer>();
@@ -95,11 +100,9 @@ using (var scope = app.Services.CreateScope())
     catch { }
 }
 
-if (app.Environment.IsDevelopment())
-{
-    app.UseSwagger();
-    app.UseSwaggerUI();
-}
+app.UseSmartWalletOpenApi();
+
+app.UseSmartWalletRequestLogging();
 
 app.UseAuthentication();
 app.UseAuthorization();
@@ -113,3 +116,20 @@ app.UseConsulServiceRegistration(builder.Configuration, app.Lifetime);
 app.MapControllers();
 
 app.Run();
+
+sealed class BudgetSqlitePragmaInterceptor : DbConnectionInterceptor
+{
+    public override void ConnectionOpened(DbConnection connection, ConnectionEndEventData eventData)
+    {
+        using var cmd = connection.CreateCommand();
+        cmd.CommandText = "PRAGMA journal_mode=WAL; PRAGMA synchronous=NORMAL; PRAGMA busy_timeout=5000;";
+        cmd.ExecuteNonQuery();
+    }
+
+    public override async Task ConnectionOpenedAsync(DbConnection connection, ConnectionEndEventData eventData, CancellationToken cancellationToken = default)
+    {
+        await using var cmd = connection.CreateCommand();
+        cmd.CommandText = "PRAGMA journal_mode=WAL; PRAGMA synchronous=NORMAL; PRAGMA busy_timeout=5000;";
+        await cmd.ExecuteNonQueryAsync(cancellationToken);
+    }
+}

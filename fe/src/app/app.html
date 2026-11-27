@@ -53,6 +53,13 @@
   </header>
 
   <main style="max-width: 1200px; margin: 1.5rem auto; padding: 0 1rem; box-sizing: border-box;">
+    <div *ngIf="rateLimitNotice.notice() as msg"
+         data-testid="rate-limit-banner"
+         role="alert"
+         style="background: #fef2f2; border: 1px solid #fecaca; color: #991b1b; padding: 0.75rem 1rem; border-radius: 8px; margin-bottom: 1rem; display: flex; justify-content: space-between; align-items: center; gap: 0.75rem;">
+      <span>⚠️ {{ msg }}</span>
+      <button type="button" (click)="rateLimitNotice.clear()" style="background: transparent; border: none; color: #991b1b; font-weight: 700; cursor: pointer;">✕</button>
+    </div>
     <router-outlet></router-outlet>
   </main>
 </div>

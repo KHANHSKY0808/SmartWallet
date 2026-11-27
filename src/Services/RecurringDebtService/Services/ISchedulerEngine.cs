@@ -95,6 +95,8 @@ public class SchedulerEngine : ISchedulerEngine
 
         using var scope = _serviceProvider.CreateScope();
         var context = scope.ServiceProvider.GetRequiredService<RecurringDebtDbContext>();
+        var publisher = scope.ServiceProvider.GetService<IEventPublisher>() ?? _eventPublisher;
+        await using var dbTx = await context.Database.BeginTransactionAsync(cancellationToken);
 
         // ------------------------------------------------------------
         // 1. Quét quy tắc định kỳ (RecurringRules)
@@ -130,9 +132,9 @@ public class SchedulerEngine : ISchedulerEngine
                 var occurrence = rule.NextExecutionDate;
 
                 // Publish sự kiện để TransactionService tạo giao dịch
-                if (_eventPublisher != null)
+                if (publisher != null)
                 {
-                    await _eventPublisher.PublishAsync(new RecurringTransactionDueEvent
+                    await publisher.PublishAsync(new RecurringTransactionDueEvent
                     {
                         RuleId = rule.Id,
                         UserId = rule.UserId,
@@ -168,9 +170,9 @@ public class SchedulerEngine : ISchedulerEngine
         {
             if (rule.ReminderSentOn != asOfDate)
             {
-                if (_eventPublisher != null)
+                if (publisher != null)
                 {
-                    await _eventPublisher.PublishAsync(new DueReminderEvent
+                    await publisher.PublishAsync(new DueReminderEvent
                     {
                         UserId = rule.UserId,
                         SourceId = rule.Id,
@@ -198,9 +200,9 @@ public class SchedulerEngine : ISchedulerEngine
             debt.Status = DebtStatus.Overdue;
             if (!debt.OverdueNotified)
             {
-                if (_eventPublisher != null)
+                if (publisher != null)
                 {
-                    await _eventPublisher.PublishAsync(new DueReminderEvent
+                    await publisher.PublishAsync(new DueReminderEvent
                     {
                         UserId = debt.UserId,
                         SourceId = debt.Id,
@@ -224,9 +226,9 @@ public class SchedulerEngine : ISchedulerEngine
         {
             if (debt.ReminderSentOn != asOfDate)
             {
-                if (_eventPublisher != null)
+                if (publisher != null)
                 {
-                    await _eventPublisher.PublishAsync(new DueReminderEvent
+                    await publisher.PublishAsync(new DueReminderEvent
                     {
                         UserId = debt.UserId,
                         SourceId = debt.Id,
@@ -242,6 +244,7 @@ public class SchedulerEngine : ISchedulerEngine
         }
 
         await context.SaveChangesAsync(cancellationToken);
+        await dbTx.CommitAsync(cancellationToken);
         _logger.LogInformation("Hoàn thành vòng quét Scheduler cho ngày asOf: {AsOfDate}", asOfDate);
     }
 }

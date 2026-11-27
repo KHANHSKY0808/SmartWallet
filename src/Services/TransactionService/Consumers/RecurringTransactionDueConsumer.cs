@@ -107,12 +107,13 @@ public class RecurringTransactionDueConsumer : BaseRabbitMqConsumer<RecurringTra
             UpdatedAt = DateTime.UtcNow
         };
 
+        await using var dbTx = await context.Database.BeginTransactionAsync(cancellationToken);
         context.Transactions.Add(tx);
         await context.SaveChangesAsync(cancellationToken);
 
         _logger.LogInformation("Đã tạo giao dịch định kỳ {TxId} cho Rule {RuleId}, kỳ {OccurrenceDate}", tx.Id, @event.RuleId, @event.OccurrenceDate);
 
-        // 5. Publish sự kiện TransactionCreatedEvent để cập nhật số dư ví và ngân sách
+        // 5. Ghi Outbox sự kiện TransactionCreatedEvent trong cùng DB transaction (D72)
         if (eventPublisher != null)
         {
             await eventPublisher.PublishAsync(new TransactionCreatedEvent
@@ -130,6 +131,7 @@ public class RecurringTransactionDueConsumer : BaseRabbitMqConsumer<RecurringTra
                 Note = tx.Note
             }, "transaction.created", cancellationToken);
         }
+        await dbTx.CommitAsync(cancellationToken);
     }
 }
 

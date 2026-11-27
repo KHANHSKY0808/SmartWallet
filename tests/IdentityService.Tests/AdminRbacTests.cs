@@ -10,6 +10,7 @@ using Microsoft.AspNetCore.Mvc;
 using Microsoft.Data.Sqlite;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Configuration;
+using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
 using SharedKernel.Events;
@@ -236,38 +237,67 @@ public class AdminRbacTests : IDisposable
         var firstToken = await _context.UserTokens.SingleAsync();
         Assert.Null(firstToken.UsedAt);
 
-        // 2. Resend while broker still down -> 503 EVENT_PUBLISH_FAILED and rolls back
-        var failResend = Assert.IsType<ObjectResult>(await ctrl.ResendConfirmation(new DTOs.ResendConfirmationRequest { Email = "n44user@qa.local" }));
-        Assert.Equal(503, failResend.StatusCode);
-        Assert.Contains("EVENT_PUBLISH_FAILED", JsonSerializer.Serialize(failResend.Value));
+        // 2. D72 Outbox: Resend via OutboxEventPublisher succeeds (200) even when RabbitMQ raw broker is down,
+        //    commits new UserToken + OutboxMessage atomically, and OutboxDispatcher delivers EmailRequestedEvent once broker recovers
+        var rawBroker = new FakeRawPublisher { ShouldThrow = true };
+        using var sp = new ServiceCollection()
+            .AddSingleton(_context)
+            .BuildServiceProvider();
+        var wakeSignal = new OutboxWakeSignal();
+        var outboxPublisher = new OutboxEventPublisher<IdentityDbContext>(_context, wakeSignal);
+        var dispatcher = new OutboxDispatcher<IdentityDbContext>(sp, rawBroker, wakeSignal, NullLogger<OutboxDispatcher<IdentityDbContext>>.Instance);
+        var outboxCtrl = new AuthController(_context, _hasher, tokenService, captureLogger, outboxPublisher, null, clock, limiter);
 
-        // 3. Broker recovers -> Resend succeeds (200), invalidates old token, publishes EmailRequestedEvent
-        publisher.ShouldThrow = false;
-        var okResend1 = Assert.IsType<OkObjectResult>(await ctrl.ResendConfirmation(new DTOs.ResendConfirmationRequest { Email = "n44user@qa.local" }));
+        var okResend1 = Assert.IsType<OkObjectResult>(await outboxCtrl.ResendConfirmation(new DTOs.ResendConfirmationRequest { Email = "n44user@qa.local" }));
         Assert.Equal(200, okResend1.StatusCode);
-        var emailEv = Assert.Single(publisher.PublishedEvents.OfType<EmailRequestedEvent>());
-        Assert.Equal("n44user@qa.local", emailEv.To);
-        Assert.Equal("ConfirmEmail", emailEv.Template);
-        Assert.Contains("/confirm-email?token=", emailEv.Data["confirmLink"]);
 
         var oldTokenReloaded = await _context.UserTokens.FirstAsync(t => t.Id == firstToken.Id);
         Assert.NotNull(oldTokenReloaded.UsedAt);
         Assert.Equal(2, await _context.UserTokens.CountAsync());
+        var outboxPending = await _context.OutboxMessages.SingleAsync();
+        Assert.Null(outboxPending.SentAt);
 
-        // 4. Rate limit: calling again within 60s returns same 200 message without publishing a duplicate event
+        // Broker still down -> dispatcher retains message and increments Attempts
+        Assert.Equal(0, await dispatcher.ProcessPendingAsync());
+        var failedMsg = await _context.OutboxMessages.SingleAsync();
+        Assert.Null(failedMsg.SentAt);
+        Assert.Equal(1, failedMsg.Attempts);
+
+        // 3. Broker recovers -> dispatcher delivers queued EmailRequestedEvent and marks SentAt
+        rawBroker.ShouldThrow = false;
+        Assert.Equal(1, await dispatcher.ProcessPendingAsync());
+        var emailRaw = Assert.Single(rawBroker.Published);
+        Assert.Equal("identity.email_requested", emailRaw.RoutingKey);
+        Assert.Contains("n44user@qa.local", emailRaw.Payload);
+        Assert.Contains("/confirm-email?token=", emailRaw.Payload);
+        Assert.NotNull((await _context.OutboxMessages.SingleAsync()).SentAt);
+
+        // 4. Rate limit: calling again within 60s returns same 200 message without enqueueing a duplicate outbox event
         clock.Advance(TimeSpan.FromSeconds(30));
-        var throttled = Assert.IsType<OkObjectResult>(await ctrl.ResendConfirmation(new DTOs.ResendConfirmationRequest { Email = "n44user@qa.local" }));
+        var throttled = Assert.IsType<OkObjectResult>(await outboxCtrl.ResendConfirmation(new DTOs.ResendConfirmationRequest { Email = "n44user@qa.local" }));
         Assert.Equal(JsonSerializer.Serialize(okResend1.Value), JsonSerializer.Serialize(throttled.Value));
-        Assert.Single(publisher.PublishedEvents.OfType<EmailRequestedEvent>());
+        Assert.Single(await _context.OutboxMessages.ToListAsync());
 
         // 5. After 60s -> allowed again
         clock.Advance(TimeSpan.FromSeconds(31));
-        var okResend2 = Assert.IsType<OkObjectResult>(await ctrl.ResendConfirmation(new DTOs.ResendConfirmationRequest { Email = "n44user@qa.local" }));
-        Assert.Equal(2, publisher.PublishedEvents.OfType<EmailRequestedEvent>().Count());
+        var okResend2 = Assert.IsType<OkObjectResult>(await outboxCtrl.ResendConfirmation(new DTOs.ResendConfirmationRequest { Email = "n44user@qa.local" }));
+        Assert.Equal(2, await _context.OutboxMessages.CountAsync());
 
         // 6. Unknown email -> identical 200 body (no enumeration)
-        var unknown = Assert.IsType<OkObjectResult>(await ctrl.ResendConfirmation(new DTOs.ResendConfirmationRequest { Email = "missing@qa.local" }));
+        var unknown = Assert.IsType<OkObjectResult>(await outboxCtrl.ResendConfirmation(new DTOs.ResendConfirmationRequest { Email = "missing@qa.local" }));
         Assert.Equal(JsonSerializer.Serialize(okResend1.Value), JsonSerializer.Serialize(unknown.Value));
+    }
+
+    private sealed class FakeRawPublisher : IRawEventPublisher
+    {
+        public bool ShouldThrow { get; set; }
+        public List<(Guid EventId, string EventType, string RoutingKey, string Payload)> Published { get; } = new();
+        public Task PublishRawAsync(Guid eventId, string eventType, string routingKey, string payloadJson, string? correlationId = null, DateTime? occurredAtUtc = null, CancellationToken cancellationToken = default)
+        {
+            if (ShouldThrow) throw new InvalidOperationException("Simulated RabbitMQ down");
+            Published.Add((eventId, eventType, routingKey, payloadJson));
+            return Task.CompletedTask;
+        }
     }
 
     public void Dispose()

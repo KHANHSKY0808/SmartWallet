@@ -45,6 +45,7 @@ public class DebtDeletedConsumer : BaseRabbitMqConsumer<DebtDeletedEvent>
             return;
         }
 
+        await using var dbTx = await context.Database.BeginTransactionAsync(cancellationToken);
         foreach (var tx in txs)
         {
             context.Transactions.Remove(tx);
@@ -65,6 +66,7 @@ public class DebtDeletedConsumer : BaseRabbitMqConsumer<DebtDeletedEvent>
                 }, "transaction.deleted", cancellationToken);
             }
         }
+        await dbTx.CommitAsync(cancellationToken);
     }
 }
 

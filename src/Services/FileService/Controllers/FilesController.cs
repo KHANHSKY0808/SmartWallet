@@ -33,7 +33,7 @@ public class FilesController : ControllerBase
     [HttpPost("receipts")]
     [Authorize]
     [RequestSizeLimit(6 * 1024 * 1024)]
-    public async Task<IActionResult> UploadReceipt([FromForm] IFormFile? file)
+    public async Task<IActionResult> UploadReceipt(IFormFile? file)
     {
         if (file == null || file.Length == 0)
         {

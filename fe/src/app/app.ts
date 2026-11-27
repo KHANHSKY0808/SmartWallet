@@ -2,6 +2,7 @@ import { Component, inject } from '@angular/core';
 import { CommonModule } from '@angular/common';
 import { Router, RouterModule, RouterOutlet } from '@angular/router';
 import { AuthService } from './core/services/auth.service';
+import { RateLimitNoticeService } from './core/services/rate-limit-notice.service';
 import { NotificationBellComponent } from './shared/components/notification-bell/notification-bell.component';
 
 @Component({
@@ -13,6 +14,7 @@ import { NotificationBellComponent } from './shared/components/notification-bell
 })
 export class App {
   authService = inject(AuthService);
+  rateLimitNotice = inject(RateLimitNoticeService);
   router = inject(Router);
 
   logout(): void {

@@ -1,9 +1,10 @@
 using Microsoft.EntityFrameworkCore;
 using SavingGoalService.Models;
+using SharedKernel.Messaging;
 
 namespace SavingGoalService.Data;
 
-public class SavingGoalDbContext : DbContext
+public class SavingGoalDbContext : DbContext, IOutboxDbContext
 {
     public SavingGoalDbContext(DbContextOptions<SavingGoalDbContext> options) : base(options)
     {
@@ -13,6 +14,7 @@ public class SavingGoalDbContext : DbContext
     public DbSet<GoalLog> GoalLogs => Set<GoalLog>();
     public DbSet<ProcessedEvent> ProcessedEvents => Set<ProcessedEvent>();
     public DbSet<IdempotencyRecord> IdempotencyRecords => Set<IdempotencyRecord>();
+    public DbSet<OutboxMessage> OutboxMessages => Set<OutboxMessage>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
@@ -55,5 +57,7 @@ public class SavingGoalDbContext : DbContext
             entity.Property(e => e.Key).HasMaxLength(100);
             entity.Property(e => e.RequestHash).HasMaxLength(64);
         });
+
+        modelBuilder.ConfigureOutboxMessages();
     }
 }

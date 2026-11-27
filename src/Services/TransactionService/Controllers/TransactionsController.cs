@@ -327,8 +327,8 @@ public class TransactionsController : ControllerBase
         catch (Exception ex)
         {
             await dbTx.RollbackAsync();
-            _logger.LogError(ex, "Lỗi khi lưu giao dịch hoặc publish sự kiện TransactionCreatedEvent, đã rollback DB transaction");
-            return StatusCode(503, new { code = "EVENT_PUBLISH_FAILED", message = "Không thể publish sự kiện lên message broker, giao dịch đã được rollback." });
+            _logger.LogError(ex, "Lỗi khi lưu giao dịch và ghi Outbox TransactionCreatedEvent, đã rollback DB transaction");
+            throw;
         }
     }
 
@@ -549,8 +549,8 @@ public class TransactionsController : ControllerBase
         catch (Exception ex)
         {
             await dbTx.RollbackAsync();
-            _logger.LogError(ex, "Lỗi khi cập nhật giao dịch hoặc publish sự kiện TransactionUpdatedEvent, đã rollback DB transaction");
-            return StatusCode(503, new { code = "EVENT_PUBLISH_FAILED", message = "Không thể publish sự kiện lên message broker, giao dịch đã được rollback." });
+            _logger.LogError(ex, "Lỗi khi cập nhật giao dịch và ghi Outbox TransactionUpdatedEvent, đã rollback DB transaction");
+            throw;
         }
     }
 
@@ -627,8 +627,8 @@ public class TransactionsController : ControllerBase
         catch (Exception ex)
         {
             await dbTx.RollbackAsync();
-            _logger.LogError(ex, "Lỗi khi xóa giao dịch hoặc publish sự kiện TransactionDeletedEvent, đã rollback DB transaction");
-            return StatusCode(503, new { code = "EVENT_PUBLISH_FAILED", message = "Không thể publish sự kiện lên message broker, giao dịch đã được rollback." });
+            _logger.LogError(ex, "Lỗi khi xóa giao dịch và ghi Outbox TransactionDeletedEvent, đã rollback DB transaction");
+            throw;
         }
     }
 
@@ -710,8 +710,8 @@ public class TransactionsController : ControllerBase
         catch (Exception ex)
         {
             await dbTx.RollbackAsync();
-            _logger.LogError(ex, "Lỗi khi chuyển giao dịch hoặc publish TransactionUpdatedEvent cho danh mục thay thế, đã rollback DB transaction");
-            return StatusCode(503, new { code = "EVENT_PUBLISH_FAILED", message = "Không thể publish sự kiện lên message broker, thao tác đã được rollback." });
+            _logger.LogError(ex, "Lỗi khi chuyển giao dịch hoặc ghi Outbox TransactionUpdatedEvent, đã rollback DB transaction");
+            throw;
         }
     }
 

@@ -6,6 +6,8 @@ using SharedKernel.Messaging;
 
 var builder = WebApplication.CreateBuilder(args);
 
+builder.AddSmartWalletLogging("AuditService");
+
 // Cấu hình Controllers
 builder.Services.AddControllers();
 builder.Services.AddEndpointsApiExplorer();
@@ -65,11 +67,9 @@ using (var scope = app.Services.CreateScope())
     await AuditDbContext.EnsureImmutableTriggersAsync(context);
 }
 
-if (app.Environment.IsDevelopment())
-{
-    app.UseSwagger();
-    app.UseSwaggerUI();
-}
+app.UseSmartWalletOpenApi();
+
+app.UseSmartWalletRequestLogging();
 
 app.UseAuthentication();
 app.UseAuthorization();
