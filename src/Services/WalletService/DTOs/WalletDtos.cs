@@ -13,6 +13,7 @@ public class CreateWalletRequest
     public int Type { get; set; }
 
     [Range(0, double.MaxValue, ErrorMessage = "Số dư ban đầu không được âm")]
+    [System.Text.Json.Serialization.JsonPropertyName("openingBalance")]
     public decimal InitialBalance { get; set; }
 
     [StringLength(10, ErrorMessage = "Mã tiền tệ tối đa 10 ký tự")]
