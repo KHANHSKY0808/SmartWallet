@@ -52,7 +52,7 @@ Thumbs.db
 .env.*
 !.env.example
 backups/
-data/
+/data/
 tmp_docker_logs/
 
 ## User Uploads & Media (PII)
