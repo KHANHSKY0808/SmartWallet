@@ -1,3 +1,5 @@
+name: qlct-dev
+
 services:
   consul:
     image: hashicorp/consul:1.15

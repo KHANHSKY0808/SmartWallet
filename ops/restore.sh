@@ -1,6 +1,10 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+# Tranh MSYS2/Git Bash tu dong chuyen path container (/vol/..., /backups/...) sang Windows path
+export MSYS_NO_PATHCONV=1
+export MSYS2_ARG_CONV_EXCL="*"
+
 if [ $# -lt 1 ]; then
   echo "Cach dung:"
   echo "  Che do Docker volume (mac dinh): $0 <backupId> [composeFile]"
@@ -47,13 +51,32 @@ if [ "$MODE" = "docker" ] && [ -z "$COMPOSE_FILE" ]; then
   fi
 fi
 
+# Chon Python 3 hoat dong duoc tren ca Linux, WSL va Git Bash Windows
+PYTHON_BIN=""
+if command -v python3 >/dev/null 2>&1 && python3 -c "import sys" >/dev/null 2>&1; then
+  PYTHON_BIN="python3"
+elif command -v python >/dev/null 2>&1 && python -c "import sys" >/dev/null 2>&1; then
+  PYTHON_BIN="python"
+else
+  echo "ERROR: Khong tim thay python3 hoac python." >&2
+  exit 1
+fi
+
+to_host_path() {
+  if command -v cygpath >/dev/null 2>&1; then
+    cygpath -m "$1"
+  else
+    printf '%s\n' "$1"
+  fi
+}
+
 WORK_DIR="$(mktemp -d)"
 cleanup() { rm -rf "$WORK_DIR"; }
 trap cleanup EXIT
 
 now_ts() { date +"%H:%M:%S"; }
-now_ms() { python3 -c "import time; print(int(time.time() * 1000))"; }
-fmt_dur() { python3 -c "import sys; print(f'{(int(sys.argv[2])-int(sys.argv[1]))/1000:.2f}s')" "$1" "$2"; }
+now_ms() { "$PYTHON_BIN" -c "import time; print(int(time.time() * 1000))"; }
+fmt_dur() { "$PYTHON_BIN" -c "import sys; print(f'{(int(sys.argv[2])-int(sys.argv[1]))/1000:.2f}s')" "$1" "$2"; }
 
 DOTNET_SERVICES=(
   identityservice userprofileservice walletservice transactionservice
@@ -85,16 +108,23 @@ if [ "$MODE" = "docker" ]; then
     exit 1
   fi
 
+  COMPOSE_HOST="$(to_host_path "$COMPOSE_FILE")"
+
   # Tra ten Compose project dong (khong hardcode prefix)
-  PROJ_NAME=""
-  VOL_MATCH="$(docker volume ls --filter "label=com.docker.compose.volume=qlct_backups" --format "{{.Name}}" | head -n 1 || true)"
-  if [ -n "$VOL_MATCH" ] && [[ "$VOL_MATCH" == *_qlct_backups ]]; then
-    PROJ_NAME="${VOL_MATCH%_qlct_backups}"
+  PROJ_NAME="$(JWT_SIGNING_KEY="${JWT_SIGNING_KEY:-restore-lookup-placeholder-key-0123456789}" \
+    SEED_ADMIN_PASSWORD="${SEED_ADMIN_PASSWORD:-placeholder}" \
+    docker compose -f "$COMPOSE_HOST" config --format json 2>/dev/null \
+    | "$PYTHON_BIN" -c "import json,sys; d=json.load(sys.stdin); print(d.get('name',''))" || true)"
+  if [ -z "$PROJ_NAME" ]; then
+    VOL_MATCH="$(docker volume ls --filter "label=com.docker.compose.volume=qlct_backups" --format "{{.Name}}" || true)"
+    VOL_MATCH="${VOL_MATCH%%$'\n'*}"
+    if [ -n "$VOL_MATCH" ] && [[ "$VOL_MATCH" == *_qlct_backups ]]; then
+      PROJ_NAME="${VOL_MATCH%_qlct_backups}"
+    fi
   fi
   if [ -z "$PROJ_NAME" ]; then
-    PROJ_NAME="$(JWT_SIGNING_KEY="${JWT_SIGNING_KEY:-restore-lookup-placeholder-key-0123456789}" \
-      SEED_ADMIN_PASSWORD="${SEED_ADMIN_PASSWORD:-placeholder}" \
-      docker compose -f "$COMPOSE_FILE" config --format json | python3 -c "import json,sys; print(json.load(sys.stdin)['name'])")"
+    echo "ERROR: Khong xac dinh duoc ten Compose project." >&2
+    exit 1
   fi
   BACKUP_VOL="${PROJ_NAME}_qlct_backups"
 
@@ -112,10 +142,15 @@ if [ "$MODE" = "docker" ]; then
   ZIP_LOCAL="${WORK_DIR}/${BACKUP_ID}.zip"
   UNZIP_DIR="${WORK_DIR}/extracted"
   mkdir -p "$UNZIP_DIR"
-  docker cp "${TMP_CID}:/backups/manifest.json" "$MANIFEST_LOCAL" >/dev/null 2>&1 || true
-  if docker cp "${TMP_CID}:/backups/${BACKUP_ID}.zip" "$ZIP_LOCAL" >/dev/null 2>&1; then
-    python3 -c "import zipfile,sys; zipfile.ZipFile(sys.argv[1]).extractall(sys.argv[2])" "$ZIP_LOCAL" "$UNZIP_DIR"
-  elif docker cp "${TMP_CID}:/backups/${BACKUP_ID}/." "$UNZIP_DIR" >/dev/null 2>&1; then
+
+  MANIFEST_HOST="$(to_host_path "$MANIFEST_LOCAL")"
+  ZIP_HOST="$(to_host_path "$ZIP_LOCAL")"
+  UNZIP_HOST="$(to_host_path "$UNZIP_DIR")"
+
+  docker cp "${TMP_CID}:/backups/manifest.json" "$MANIFEST_HOST" >/dev/null 2>&1 || true
+  if docker cp "${TMP_CID}:/backups/${BACKUP_ID}.zip" "$ZIP_HOST" >/dev/null 2>&1; then
+    "$PYTHON_BIN" -c "import zipfile,sys; zipfile.ZipFile(sys.argv[1]).extractall(sys.argv[2])" "$ZIP_HOST" "$UNZIP_HOST"
+  elif docker cp "${TMP_CID}:/backups/${BACKUP_ID}/." "$UNZIP_HOST" >/dev/null 2>&1; then
     true
   else
     docker rm -f "$TMP_CID" >/dev/null 2>&1 || true
@@ -128,14 +163,14 @@ if [ "$MODE" = "docker" ]; then
 
   S2="$(now_ms)"
   echo "[$(now_ts)] [2/6] Doi chieu SHA-256 truoc khi ghi va PRAGMA integrity_check..."
-  python3 - "$BACKUP_ID" "$MANIFEST_LOCAL" "$UNZIP_DIR" <<'PYEOF'
+  "$PYTHON_BIN" - "$BACKUP_ID" "$MANIFEST_HOST" "$UNZIP_HOST" <<'PYEOF'
 import hashlib, json, sqlite3, sys
 from pathlib import Path
 
 bid, manifest_path, work = sys.argv[1], Path(sys.argv[2]), Path(sys.argv[3])
 if not manifest_path.exists():
     raise SystemExit(f"Thieu manifest.json tai {manifest_path}")
-entries = [{k.lower(): v for k, v in e.items()} for e in json.loads(manifest_path.read_text(encoding="utf-8"))]
+entries = [{k.lower(): v for k, v in e.items()} for e in json.loads(manifest_path.read_text(encoding="utf-8-sig"))]
 entry = next((e for e in entries if e.get("backupid") == bid), None)
 if not entry:
     raise SystemExit(f"Khong tim thay backupId={bid} trong manifest.json")
@@ -167,7 +202,7 @@ PYEOF
 
   S3="$(now_ms)"
   echo "[$(now_ts)] [3/6] Dung 13 container .NET (Compose project: ${PROJ_NAME})..."
-  docker compose -f "$COMPOSE_FILE" stop apigateway identityservice userprofileservice walletservice transactionservice categoryservice budgetservice savinggoalservice recurringdebtservice reportservice notificationservice auditservice fileservice
+  docker compose -f "$COMPOSE_HOST" stop "${DOTNET_SERVICES[@]}"
   E3="$(now_ms)"
   echo "  -> Hoan tat [3/6] trong $(fmt_dur "$S3" "$E3")"
 
@@ -184,7 +219,7 @@ PYEOF
     fi
   done
   WRITER_CID="$(docker create --entrypoint sh "${VOL_ARGS[@]}" "$HELPER_IMG" -c "$COPY_CMDS")"
-  docker cp "${UNZIP_DIR}/." "${WRITER_CID}:/restore_src/"
+  docker cp "${UNZIP_HOST}/." "${WRITER_CID}:/restore_src/"
   docker start -a "$WRITER_CID"
   docker rm -f "$WRITER_CID" >/dev/null 2>&1 || true
   E4="$(now_ms)"
@@ -199,22 +234,26 @@ PYEOF
     RO_ARGS+=("-v" "${PROJ_NAME}_${vol}:/vol/${key}:ro")
     HASH_CMDS="${HASH_CMDS} sha256sum \"/vol/${key}/${db}\";"
   done
-  HASH_OUT="$(docker run --rm --entrypoint sh "${RO_ARGS[@]}" "$HELPER_IMG" -c "$HASH_CMDS")"
-  echo "$HASH_OUT" | python3 - "$BACKUP_ID" "$MANIFEST_LOCAL" <<'PYEOF'
+  HASH_FILE="${WORK_DIR}/actual_hashes.txt"
+  HASH_HOST="$(to_host_path "$HASH_FILE")"
+  docker run --rm --entrypoint sh "${RO_ARGS[@]}" "$HELPER_IMG" -c "$HASH_CMDS" > "$HASH_FILE"
+  "$PYTHON_BIN" - "$BACKUP_ID" "$MANIFEST_HOST" "$HASH_HOST" <<'PYEOF'
 import json, sys
 from pathlib import Path
 
-bid, mpath = sys.argv[1], Path(sys.argv[2])
+bid, mpath, hpath = sys.argv[1], Path(sys.argv[2]), Path(sys.argv[3])
 actual = {}
-for line in sys.stdin.read().splitlines():
+for line in hpath.read_text(encoding="utf-8-sig").splitlines():
     line = line.strip()
     if not line:
         continue
     digest, path = line.split(None, 1)
     actual[Path(path.strip()).name] = digest.lower()
 
-entries = [{k.lower(): v for k, v in e.items()} for e in json.loads(mpath.read_text(encoding="utf-8"))]
+entries = [{k.lower(): v for k, v in e.items()} for e in json.loads(mpath.read_text(encoding="utf-8-sig"))]
 entry = next((e for e in entries if e.get("backupid") == bid), None)
+if not entry:
+    raise SystemExit(f"Khong tim thay backupId={bid} trong manifest.json")
 for rf in entry.get("files", []):
     f = {k.lower(): v for k, v in rf.items()}
     fn = Path(f["filename"]).name
@@ -222,14 +261,14 @@ for rf in entry.get("files", []):
         raise SystemExit(f"Thieu {fn} trong volume Docker sau restore")
     if actual[fn] != f["sha256"].lower():
         raise SystemExit(f"Post-restore SHA-256 sai cho {fn}: {actual[fn]} != {f['sha256']}")
-print(f"Post-restore SHA-256 trong 12/12 volume khop manifest.json 100%.")
+print("Post-restore SHA-256 trong 12/12 volume khop manifest.json 100%.")
 PYEOF
   E5="$(now_ms)"
   echo "  -> Hoan tat [5/6] trong $(fmt_dur "$S5" "$E5")"
 
   S6="$(now_ms)"
   echo "[$(now_ts)] [6/6] Khoi dong lai 13 container .NET va cho /health (8000-8012)..."
-  docker compose -f "$COMPOSE_FILE" start identityservice userprofileservice walletservice transactionservice categoryservice budgetservice savinggoalservice recurringdebtservice reportservice notificationservice auditservice fileservice apigateway
+  docker compose -f "$COMPOSE_HOST" start "${DOTNET_SERVICES[@]}"
   for port in 8000 8001 8002 8003 8004 8005 8006 8007 8008 8009 8010 8011 8012; do
     WAITED=0
     until curl -fsS "http://127.0.0.1:${port}/health" >/dev/null 2>&1; do
@@ -250,8 +289,10 @@ else
 
   S1="$(now_ms)"
   echo "[$(now_ts)] [1/5] Kiem tra ban sao luu ${BACKUP_ID}..."
+  WORK_HOST="$(to_host_path "$WORK_DIR")"
   if [ -f "$ZIP_FILE" ]; then
-    python3 -c "import zipfile,sys; zipfile.ZipFile(sys.argv[1]).extractall(sys.argv[2])" "$ZIP_FILE" "$WORK_DIR"
+    ZIP_HOST="$(to_host_path "$ZIP_FILE")"
+    "$PYTHON_BIN" -c "import zipfile,sys; zipfile.ZipFile(sys.argv[1]).extractall(sys.argv[2])" "$ZIP_HOST" "$WORK_HOST"
   elif [ -d "${BACKUP_DIR}/${BACKUP_ID}" ]; then
     cp -a "${BACKUP_DIR}/${BACKUP_ID}/." "$WORK_DIR/"
   else
@@ -263,13 +304,14 @@ else
 
   S2="$(now_ms)"
   echo "[$(now_ts)] [2/5] Doi chieu SHA-256 voi manifest.json va PRAGMA integrity_check..."
-  python3 - "$BACKUP_ID" "$BACKUP_DIR/manifest.json" "$WORK_DIR" <<'PYEOF'
+  MANIFEST_HOST="$(to_host_path "${BACKUP_DIR}/manifest.json")"
+  "$PYTHON_BIN" - "$BACKUP_ID" "$MANIFEST_HOST" "$WORK_HOST" <<'PYEOF'
 import hashlib, json, sqlite3, sys
 from pathlib import Path
 
 bid, manifest_path, work = sys.argv[1], Path(sys.argv[2]), Path(sys.argv[3])
 if manifest_path.exists():
-    entries = [{k.lower(): v for k, v in e.items()} for e in json.loads(manifest_path.read_text(encoding="utf-8"))]
+    entries = [{k.lower(): v for k, v in e.items()} for e in json.loads(manifest_path.read_text(encoding="utf-8-sig"))]
     entry = next((e for e in entries if e.get("backupid") == bid), None)
     if entry:
         for raw_f in entry.get("files", []):
@@ -295,7 +337,7 @@ PYEOF
   S3="$(now_ms)"
   echo "[$(now_ts)] [3/5] Dung cac service neu co ComposeFile..."
   if [ -n "$COMPOSE_FILE" ] && [ -f "$COMPOSE_FILE" ] && command -v docker >/dev/null 2>&1; then
-    docker compose -f "$COMPOSE_FILE" stop "${DOTNET_SERVICES[@]}" || true
+    docker compose -f "$(to_host_path "$COMPOSE_FILE")" stop "${DOTNET_SERVICES[@]}" || true
   fi
   E3="$(now_ms)"
   echo "  -> Hoan tat [3/5] trong $(fmt_dur "$S3" "$E3")"
@@ -314,7 +356,7 @@ PYEOF
   S5="$(now_ms)"
   echo "[$(now_ts)] [5/5] Khoi dong lai cac service neu co ComposeFile..."
   if [ -n "$COMPOSE_FILE" ] && [ -f "$COMPOSE_FILE" ] && command -v docker >/dev/null 2>&1; then
-    docker compose -f "$COMPOSE_FILE" start identityservice userprofileservice walletservice transactionservice categoryservice budgetservice savinggoalservice recurringdebtservice reportservice notificationservice auditservice fileservice apigateway
+    docker compose -f "$(to_host_path "$COMPOSE_FILE")" start "${DOTNET_SERVICES[@]}"
     for port in 8000 8001 8002 8003 8004 8005 8006 8007 8008 8009 8010 8011 8012; do
       until curl -fsS "http://127.0.0.1:${port}/health" >/dev/null 2>&1; do
         sleep 1

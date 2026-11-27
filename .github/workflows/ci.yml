@@ -47,6 +47,13 @@ jobs:
         with:
           fetch-depth: 0
 
+      - name: Lint Shell Scripts (ShellCheck)
+        run: |
+          if ! command -v shellcheck >/dev/null 2>&1; then
+            sudo apt-get update && sudo apt-get install -y --no-install-recommends shellcheck
+          fi
+          shellcheck ops/*.sh
+
       - name: Secret Scan (Gitleaks)
         run: |
           GITLEAKS_VER="8.21.2"
