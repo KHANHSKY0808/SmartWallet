@@ -186,7 +186,7 @@ services:
       Services__WalletService__Url: http://walletservice:8003
       Services__CategoryService__Url: http://categoryservice:8005
       Services__FileService__Url: http://fileservice:8012
-      Import__TempDirectory: /tmp/smartwallet-imports
+      Import__TempDirectory: /data/imports
     volumes:
       - transaction_data:/data
       - qlct_backups:/backups

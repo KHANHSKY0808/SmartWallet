@@ -195,5 +195,60 @@ public class ReportSyncAndBackfillTests : IDisposable
         Assert.Equal(1, count);
         Assert.Equal(1, await _db.TransactionProjections.CountAsync());
     }
+
+    [Fact]
+    public async Task Test_N52_TransactionCreatedConsumer_ThroughputAtLeast200EventsPerSecond()
+    {
+        var tempDb = Path.Combine(Path.GetTempPath(), $"report-perf-{Guid.NewGuid():N}.db");
+        try
+        {
+            var services = new ServiceCollection();
+            services.AddDbContext<ReportDbContext>(o => o.UseSqlite($"Data Source={tempDb};Cache=Shared"));
+            using var sp = services.BuildServiceProvider();
+            using (var scope = sp.CreateScope())
+            {
+                var db = scope.ServiceProvider.GetRequiredService<ReportDbContext>();
+                db.Database.EnsureCreated();
+                db.Database.ExecuteSqlRaw("PRAGMA journal_mode=WAL; PRAGMA synchronous=NORMAL; PRAGMA busy_timeout=5000;");
+            }
+
+            var consumer = new TransactionCreatedConsumer(_config, NullLogger<TransactionCreatedConsumer>.Instance, sp);
+            var userId = Guid.NewGuid();
+            var walletId = Guid.NewGuid();
+            var catId = Guid.NewGuid();
+            const int eventCount = 600;
+
+            var sw = System.Diagnostics.Stopwatch.StartNew();
+            for (var i = 0; i < eventCount; i++)
+            {
+                await consumer.HandleEventAsync(new TransactionCreatedEvent
+                {
+                    TransactionId = Guid.NewGuid(),
+                    UserId = userId,
+                    WalletId = walletId,
+                    CategoryId = catId,
+                    CategoryName = "Ăn uống",
+                    Type = 1,
+                    Amount = 10_000m + i,
+                    Currency = "VND",
+                    TransactionDate = new DateTime(2026, 11, 20, 0, 0, 0, DateTimeKind.Utc),
+                    OccurredAt = DateTime.UtcNow
+                });
+            }
+            sw.Stop();
+
+            var rate = eventCount / sw.Elapsed.TotalSeconds;
+            Assert.True(rate >= 200.0, $"Throughput too slow: {rate:F1} events/s (< 200 events/s), elapsed={sw.Elapsed.TotalSeconds:F2}s");
+        }
+        finally
+        {
+            SqliteConnection.ClearAllPools();
+            foreach (var suffix in new[] { "", "-wal", "-shm" })
+            {
+                var p = tempDb + suffix;
+                if (File.Exists(p)) File.Delete(p);
+            }
+        }
+    }
 }
 

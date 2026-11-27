@@ -110,7 +110,7 @@ using (var scope = app.Services.CreateScope())
     db.Database.Migrate();
     try
     {
-        db.Database.ExecuteSqlRaw("PRAGMA journal_mode=WAL;");
+        db.Database.ExecuteSqlRaw("PRAGMA journal_mode=WAL; PRAGMA synchronous=NORMAL; PRAGMA busy_timeout=5000;");
     }
     catch { }
 }

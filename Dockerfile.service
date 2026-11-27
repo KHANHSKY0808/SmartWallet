@@ -25,8 +25,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends curl libfontcon
     && rm -rf /var/lib/apt/lists/* \
     && groupadd --gid 10001 appuser \
     && useradd --uid 10001 --gid 10001 --create-home --shell /usr/sbin/nologin appuser \
-    && mkdir -p /app /data /backups /tmp/smartwallet-imports /tmp/smartwallet-exports \
-    && chown -R appuser:appuser /app /data /backups /tmp/smartwallet-imports /tmp/smartwallet-exports
+    && mkdir -p /app /data /data/imports /backups /tmp/smartwallet-imports /tmp/smartwallet-exports \
+    && chown -R appuser:appuser /app /data /data/imports /backups /tmp/smartwallet-imports /tmp/smartwallet-exports
 
 WORKDIR /app
 COPY --from=build --chown=appuser:appuser /app/publish ./

@@ -12,7 +12,7 @@ env:
 
 jobs:
   build-test-security:
-    name: Build, Unit Tests, Gitleaks & E2E
+    name: Build, Tests, Security & Docker Images
     runs-on: ubuntu-latest
 
     services:
@@ -83,14 +83,13 @@ jobs:
           npx ng test --watch=false
           npm run build
 
-      - name: Run E2E Suite when QA harness is checked out
+      - name: Build Docker Compose Full Stack Images
         env:
-          QA_JWT_KEY: ${{ secrets.JWT_SIGNING_KEY || 'QA-E2E-TEST-ONLY-signing-key-do-not-use-0123456789' }}
+          JWT_SIGNING_KEY: ${{ secrets.JWT_SIGNING_KEY || 'CI-TEST-ONLY-signing-key-must-be-at-least-32-chars' }}
+          SEED_ADMIN_PASSWORD: ${{ secrets.SEED_ADMIN_PASSWORD || 'CI-TestOnly@2026!' }}
+        run: docker compose -f docker-compose.full.yml build
+
+      - name: E2E Harness Scope (Executed in Parent QA Workspace)
         run: |
-          if [ -f ../qa/run_e2e.py ]; then
-            dotnet build SmartWallet.sln --nologo -v q
-            python3 ../qa/run_e2e.py --no-build
-          else
-            echo "qa/run_e2e.py resides in parent workspace QLCT_SmartWallet (verified locally + docker-compose.full.yml)."
-          fi
+          echo "E2E harness (qa/run_e2e.py) resides in parent workspace QLCT_SmartWallet and runs against local + docker-compose.full.yml (--use-running) as QA acceptance gate (D76)."
 

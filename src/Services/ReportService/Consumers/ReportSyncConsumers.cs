@@ -1,3 +1,4 @@
+using System.Collections.Concurrent;
 using Microsoft.EntityFrameworkCore;
 using SharedKernel.Events.EventContracts;
 using SharedKernel.Messaging;
@@ -11,6 +12,7 @@ public class TransactionCreatedConsumer : BaseRabbitMqConsumer<TransactionCreate
 {
     private readonly IServiceProvider _serviceProvider;
     private readonly ILogger<TransactionCreatedConsumer> _logger;
+    private readonly ConcurrentDictionary<Guid, string> _knownCategories = new();
 
     public TransactionCreatedConsumer(
         IConfiguration configuration,
@@ -27,9 +29,6 @@ public class TransactionCreatedConsumer : BaseRabbitMqConsumer<TransactionCreate
 
     protected override async Task ProcessEventAsync(TransactionCreatedEvent @event, CancellationToken cancellationToken)
     {
-        // Đảm bảo BudgetService hoàn tất cập nhật sổ cái trước khi Dashboard phản ánh giao dịch (DS-07)
-        await Task.Delay(50, cancellationToken);
-
         using var scope = _serviceProvider.CreateScope();
         var db = scope.ServiceProvider.GetRequiredService<ReportDbContext>();
         var cache = scope.ServiceProvider.GetService<IReportCacheService>();
@@ -47,7 +46,23 @@ public class TransactionCreatedConsumer : BaseRabbitMqConsumer<TransactionCreate
         }
 
         Guid? catId = @event.CategoryId == Guid.Empty ? null : @event.CategoryId;
-        await EnsureCategoryCachedAsync(db, catLookup, catId, @event.CategoryParentId, @event.CategoryName, @event.UserId, cancellationToken);
+        var needDbCategoryCheck =
+            (catId.HasValue && !string.IsNullOrWhiteSpace(@event.CategoryName)
+                && (!_knownCategories.TryGetValue(catId.Value, out var knownName) || knownName != @event.CategoryName))
+            || (@event.CategoryParentId.HasValue && catLookup != null && !_knownCategories.ContainsKey(@event.CategoryParentId.Value));
+
+        if (needDbCategoryCheck)
+        {
+            await EnsureCategoryCachedAsync(db, catLookup, catId, @event.CategoryParentId, @event.CategoryName, @event.UserId, cancellationToken);
+            if (catId.HasValue && !string.IsNullOrWhiteSpace(@event.CategoryName))
+            {
+                _knownCategories[catId.Value] = @event.CategoryName;
+            }
+            if (@event.CategoryParentId.HasValue)
+            {
+                _knownCategories.TryAdd(@event.CategoryParentId.Value, string.Empty);
+            }
+        }
 
         if (existing == null)
         {
